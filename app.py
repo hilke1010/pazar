@@ -85,103 +85,142 @@ def sirket_ismi_standartlastir(ham_isim, mevcut_isimler):
         if score >= 88: return match
     return ham_isim
 
-# --- MAKİNE ÖĞRENMESİ ANALİZ MOTORU (GELİŞMİŞ) ---
-def akilli_analiz_raporu(df_main, sehir, segment):
+# --- MAKİNE ÖĞRENMESİ VE ANOMALİ ANALİZİ ---
+def gelismis_analiz_raporu(df_main, sehir, segment):
     col_pay = segment + " Pay"
     col_ton = segment + " Ton"
     
+    # Tarihleri Belirle
     son_tarih = df_main['Tarih'].max()
+    onceki_ay = son_tarih - relativedelta(months=1)
+    gecen_yil = son_tarih - relativedelta(years=1)
+    
     son_donem_str = format_tarih_tr(son_tarih)
     
-    analiz_text = []
-    rakip_notlari = []
+    pazar_analizi = []
+    likitgaz_analizi = []
+    rakip_analizi = []
     
-    # 1. LİKİTGAZ ANALİZİ
+    # --- 1. PAZAR BÜYÜKLÜĞÜ ANALİZİ (MoM & YoY) ---
+    # Her dönem için toplam tonajı hesapla
+    toplamlar = df_main.groupby('Tarih')[col_ton].sum()
+    
+    ton_simdi = toplamlar.get(son_tarih, 0)
+    ton_gecen_ay = toplamlar.get(onceki_ay, 0)
+    ton_gecen_yil = toplamlar.get(gecen_yil, 0)
+    
+    pazar_analizi.append(f"### 🌍 Pazar Büyüklüğü Analizi ({son_donem_str})")
+    pazar_analizi.append(f"Bu ay **{sehir}** genelinde toplam **{ton_simdi:,.0f} ton** {segment} satışı gerçekleşti.")
+    
+    # Aylık Değişim (MoM)
+    if ton_gecen_ay > 0:
+        degisim_ay = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
+        if degisim_ay > 0:
+            pazar_analizi.append(f"- 📊 Geçen aya göre: **%{degisim_ay:.1f} BÜYÜME** 📈 (Önceki: {ton_gecen_ay:,.0f} ton)")
+        else:
+            pazar_analizi.append(f"- 📊 Geçen aya göre: **%{abs(degisim_ay):.1f} DARALMA** 📉 (Önceki: {ton_gecen_ay:,.0f} ton)")
+    
+    # Yıllık Değişim (YoY)
+    if ton_gecen_yil > 0:
+        degisim_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
+        icon = "📈" if degisim_yil > 0 else "📉"
+        durum = "BÜYÜME" if degisim_yil > 0 else "DARALMA"
+        pazar_analizi.append(f"- 📅 Geçen yılın aynı ayına göre: **%{abs(degisim_yil):.1f} {durum}** {icon} (Geçen Yıl: {ton_gecen_yil:,.0f} ton)")
+    else:
+        pazar_analizi.append("- 📅 Geçen yılın verisi bulunamadığı için yıllık karşılaştırma yapılamadı.")
+        
+    pazar_analizi.append("---")
+
+    # --- 2. LİKİTGAZ DETAYLI ANALİZİ ---
     df_likit = df_main[df_main['Şirket'] == LIKITGAZ_NAME].sort_values('Tarih')
     
+    likitgaz_analizi.append(f"### 🔴 Likitgaz Performansı")
     if not df_likit.empty:
-        analiz_text.append(f"### 🔴 Likitgaz Performans Hikayesi")
-        
         for i in range(len(df_likit)):
             curr = df_likit.iloc[i]
             tarih_str = format_tarih_tr(curr['Tarih'])
             pay = curr[col_pay]
             ton = curr[col_ton]
             
+            # İlk veri
             if i == 0:
-                # İlk veri
-                analiz_text.append(f"- **{tarih_str}:** Başlangıç verisi. Pazar payı: %{pay:.2f} ({ton:,.0f} ton).")
+                likitgaz_analizi.append(f"- **{tarih_str}:** %{pay:.2f} pay ile başlangıç.")
                 continue
             
             prev = df_likit.iloc[i-1]
-            prev_ton = prev[col_ton] if prev[col_ton] > 0 else 1 # Sıfıra bölünme hatası olmasın
-            
             diff_pay = pay - prev[col_pay]
-            diff_ton_yuzde = ((ton - prev_ton) / prev_ton) * 100
+            diff_ton_yuzde = ((ton - prev[col_ton]) / prev[col_ton] * 100) if prev[col_ton] > 0 else 0
             
-            # Karmaşık Mantık (Pay vs Tonaj)
+            # Yorum Mantığı
             yorum = ""
-            durum_icon = "➡️"
+            icon = "➡️"
             
-            # Senaryo 1: Pay Düştü, Tonaj Arttı (Pazar Büyüyor, Biz Yavaşız)
-            if diff_pay < 0 and diff_ton_yuzde > 0:
-                yorum = f"📉 Pazar payı %{abs(diff_pay):.2f} puan geriledi, ANCAK satış tonajı %{diff_ton_yuzde:.1f} arttı. **Analiz:** Pazar genelinde talep artışı var, Likitgaz satışlarını artırsa da rakipler daha agresif büyüdüğü için pay kaybı oluştu."
-                durum_icon = "⚠️"
+            if diff_pay > 0:
+                icon = "↗️"
+                if diff_pay > 1.0: icon = "🚀" # Sert yükseliş
+                yorum = f"Pazar payı **{diff_pay:+.2f}** puan arttı."
+            elif diff_pay < 0:
+                icon = "↘️"
+                if diff_pay < -1.0: icon = "🔻" # Sert düşüş
+                yorum = f"Pazar payı **{abs(diff_pay):.2f}** puan geriledi."
             
-            # Senaryo 2: Pay Arttı, Tonaj Düştü (Pazar Küçülüyor, Biz İyiyiz)
-            elif diff_pay > 0 and diff_ton_yuzde < 0:
-                yorum = f"📈 Pazar payı %{diff_pay:.2f} puan arttı, buna rağmen satış tonajı %{abs(diff_ton_yuzde):.1f} düştü. **Analiz:** Pazar genelinde daralma var (talep düşüklüğü), ancak Likitgaz bu ortamda rakiplerinden müşteri çalarak payını artırmayı başardı."
-                durum_icon = "🛡️"
+            # Satış hacmi ile karşılaştırma
+            if diff_ton_yuzde > 0 and diff_pay < 0:
+                yorum += f" (Satış tonajı %{diff_ton_yuzde:.1f} artmasına rağmen pazar payı düştü -> **Pazar bizden hızlı büyüdü**)"
+            elif diff_ton_yuzde < 0 and diff_pay > 0:
+                yorum += f" (Satış tonajı düşmesine rağmen pazar payı arttı -> **Rakipler daha çok müşteri kaybetti**)"
 
-            # Senaryo 3: İkisi de Arttı (Mükemmel)
-            elif diff_pay > 0 and diff_ton_yuzde > 0:
-                yorum = f"🚀 **Çifte Başarı:** Hem pazar payı (%{diff_pay:.2f}+) hem de satış tonajı (%{diff_ton_yuzde:.1f}+) arttı. Şirket büyüme trendinde."
-                durum_icon = "✅"
-
-            # Senaryo 4: İkisi de Düştü (Kötü)
-            elif diff_pay < 0 and diff_ton_yuzde < 0:
-                yorum = f"🔻 **Kritik:** Hem pazar payı hem de satış hacmi küçüldü. Pazar kaybı yaşanıyor."
-                durum_icon = "🛑"
-                
-            # Toparlanma (Recovery) Kontrolü
-            if i > 1:
-                prev2 = df_likit.iloc[i-2]
-                # Eğer önceki ay düşmüş, bu ay artmışsa
-                if (prev[col_pay] < prev2[col_pay]) and (pay > prev[col_pay]):
-                    yorum += " **Not:** Bir önceki aydaki düşüş trendi kırılarak tekrar toparlanma sürecine girildi."
-
-            analiz_text.append(f"- {durum_icon} **{tarih_str}:** {yorum} (Pay: %{pay:.2f}, Satış: {ton:,.0f} Ton)")
-            
+            likitgaz_analizi.append(f"- {icon} **{tarih_str}:** %{pay:.2f} ({yorum})")
     else:
-        analiz_text.append("Likitgaz verisi bulunamadı.")
+        likitgaz_analizi.append("Veri bulunamadı.")
 
-    # 2. RAKİP RADARI (ANOMALİ TESPİTİ)
-    # Son aydaki en büyük 5 rakibi bul
-    son_df = df_main[df_main['Tarih'] == son_tarih].sort_values(col_pay, ascending=False)
-    rakipler = son_df[son_df['Şirket'] != LIKITGAZ_NAME].head(5)['Şirket'].tolist()
+    # --- 3. RAKİP RADARI (AFAKİ HAREKETLER) ---
+    # Sadece son ayın verisine göre analiz yapalım
+    son_df = df_main[df_main['Tarih'] == son_tarih]
+    onceki_df = df_main[df_main['Tarih'] == onceki_ay]
     
-    for rakip in rakipler:
-        df_rakip = df_main[df_main['Şirket'] == rakip].sort_values('Tarih').tail(2)
-        if len(df_rakip) < 2: continue
+    rakip_analizi.append(f"### 📡 Rakip İzleme Radarı ({son_donem_str})")
+    
+    if not son_df.empty and not onceki_df.empty:
+        # Pazar payı %1'in üzerinde olan şirketleri incele
+        onemli_sirketler = son_df[son_df[col_pay] > 1.0]['Şirket'].tolist()
         
-        son = df_rakip.iloc[-1]
-        onceki = df_rakip.iloc[-2]
+        anomali_var_mi = False
         
-        fark_pay = son[col_pay] - onceki[col_pay]
-        
-        # Dikkat çeken hareketler
-        if fark_pay > 2.0:
-            rakip_notlari.append(f"📈 **{rakip}**: Son ayda %{fark_pay:.2f} puanlık **sert bir yükseliş** yaptı.")
-        elif fark_pay < -2.0:
-            rakip_notlari.append(f"📉 **{rakip}**: Son ayda %{abs(fark_pay):.2f} puanlık **ciddi kayıp** yaşadı.")
-        elif fark_pay < -0.5:
-             rakip_notlari.append(f"🔻 **{rakip}**: Hafif düşüş eğiliminde (-%{abs(fark_pay):.2f}).")
-        
-        # Son durum notu
-        rakip_notlari.append(f"ℹ️ *{rakip}* güncel pay: %{son[col_pay]:.2f}")
-        rakip_notlari.append("---")
+        for sirket in onemli_sirketler:
+            if sirket == LIKITGAZ_NAME: continue
+            
+            try:
+                curr_pay = son_df[son_df['Şirket'] == sirket][col_pay].values[0]
+                prev_pay = onceki_df[onceki_df['Şirket'] == sirket][col_pay].values[0] if sirket in onceki_df['Şirket'].values else 0
+                
+                fark = curr_pay - prev_pay
+                
+                # EŞİKLER (Thresholds) - Afaki Hareket Tanımı
+                # 1. Pazar Payı 1.0 puandan fazla değiştiyse (Çok büyük olay)
+                # 2. Veya kendi hacminde %20'den fazla oynama olduysa (opsiyonel)
+                
+                if fark <= -1.5: # ÇÖKÜŞ (TP Örneği gibi)
+                    rakip_analizi.append(f"🛑 **{sirket}:** KRİTİK DÜŞÜŞ! Pazar payı **{prev_pay:.2f}%** seviyesinden **{curr_pay:.2f}%** seviyesine çakıldı. (Fark: {fark:.2f} puan)")
+                    anomali_var_mi = True
+                elif fark >= 1.5: # RALLİ
+                    rakip_analizi.append(f"🔥 **{sirket}:** AFAKİ YÜKSELİŞ! Pazar payını **{fark:+.2f}** puan artırarak **%{curr_pay:.2f}** seviyesine fırladı.")
+                    anomali_var_mi = True
+                elif fark <= -0.7: # DİKKAT ÇEKEN DÜŞÜŞ
+                    rakip_analizi.append(f"📉 **{sirket}:** Kan kaybetti. Pazar payı {fark:.2f} puan düştü.")
+                    anomali_var_mi = True
+                elif fark >= 0.7: # DİKKAT ÇEKEN YÜKSELİŞ
+                    rakip_analizi.append(f"📈 **{sirket}:** Çıkış yakaladı. Pazar payı {fark:+.2f} puan arttı.")
+                    anomali_var_mi = True
+                    
+            except: continue
+            
+        if not anomali_var_mi:
+            rakip_analizi.append("✅ Rakiplerde bu ay 'afaki' (olağandışı) bir kırılma tespit edilmedi. Pazar stabil.")
+    else:
+        rakip_analizi.append("Kıyaslama için yeterli veri yok.")
 
-    return analiz_text, rakip_notlari
+    return pazar_analizi, likitgaz_analizi, rakip_analizi
 
 # --- VERİ OKUMA ---
 @st.cache_data
@@ -259,66 +298,67 @@ else:
         
         tab1, tab2 = st.tabs(["📈 Görsel & Tablo", "🧠 Makine Öğrenmesi Analizi"])
         
-        # --- SEKME 1 ---
+        # --- SEKME 1: GRAFİK ---
         with tab1:
-            # Grafik Kısmı (Aynı kalıyor)
-            sirketler = sorted(df_sehir['Şirket'].unique())
-            defaults = [LIKITGAZ_NAME] if LIKITGAZ_NAME in sirketler else []
-            top_3 = df_sehir.groupby('Şirket')[secilen_segment + " Pay"].mean().nlargest(4).index.tolist()
-            defaults += [s for s in top_3 if s != LIKITGAZ_NAME]
-            secilen_sirketler = st.multiselect("Grafik İçin Şirketler", sirketler, default=defaults[:5])
-            
-            col_ton = secilen_segment + " Ton"
-            col_pay = secilen_segment + " Pay"
-            
+            col_filter1, col_filter2 = st.columns(2)
+            with col_filter1:
+                sirketler = sorted(df_sehir['Şirket'].unique())
+                defaults = [LIKITGAZ_NAME] if LIKITGAZ_NAME in sirketler else []
+                top_3 = df_sehir.groupby('Şirket')[secilen_segment + " Pay"].mean().nlargest(4).index.tolist()
+                defaults += [s for s in top_3 if s != LIKITGAZ_NAME]
+                secilen_sirketler = st.multiselect("Grafik İçin Şirketler", sirketler, default=defaults[:5])
+                
+            with col_filter2:
+                veri_tipi = st.radio("Gösterim Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
+                y_column = secilen_segment + " Pay" if veri_tipi == "Pazar Payı (%)" else secilen_segment + " Ton"
+
             if secilen_sirketler:
                 df_chart = df_sehir[df_sehir['Şirket'].isin(secilen_sirketler)]
                 color_map = {s: OTHER_COLORS[i % len(OTHER_COLORS)] for i, s in enumerate(secilen_sirketler)}
                 if LIKITGAZ_NAME in color_map: color_map[LIKITGAZ_NAME] = LIKITGAZ_COLOR
                 
-                fig = px.line(df_chart, x='Tarih', y=col_pay, color='Şirket', markers=True,
-                              color_discrete_map=color_map, title=f"{secilen_sehir} - {secilen_segment} Pazar Payı Trendi")
+                fig = px.line(df_chart, x='Tarih', y=y_column, color='Şirket', markers=True,
+                              color_discrete_map=color_map, title=f"{secilen_sehir} - {secilen_segment} - {veri_tipi}")
                 fig.update_xaxes(dtick="M1", tickformat="%b %Y", ticktext=df_chart['Dönem'].unique(), tickvals=df_chart['Tarih'].unique())
                 fig.update_layout(hovermode="x unified", legend=dict(orientation="h", y=1.1))
                 fig.update_traces(patch={"line": {"width": 4}}, selector={"legendgroup": LIKITGAZ_NAME})
                 st.plotly_chart(fig, use_container_width=True)
             
             st.markdown("---")
-            # FİLTRELİ TABLO KISMI (YENİ)
             st.subheader("📋 Dönemsel Sıralama Tablosu")
             
-            # Dönem Filtresi
             mevcut_donemler = df_sehir.sort_values('Tarih', ascending=False)['Dönem'].unique()
             secilen_tablo_donemi = st.selectbox("Görüntülenecek Dönemi Seçin:", mevcut_donemler)
             
-            # Tabloyu Oluştur
+            col_ton = secilen_segment + " Ton"
+            col_pay = secilen_segment + " Pay"
+            
             df_table_filtered = df_sehir[df_sehir['Dönem'] == secilen_tablo_donemi].copy()
-            # Pazar payına göre sırala
             df_table_filtered = df_table_filtered.sort_values(col_pay, ascending=False).reset_index(drop=True)
-            df_table_filtered.index += 1 # Sıralama 1'den başlasın
+            df_table_filtered.index += 1
             
-            # Gösterilecek kolonlar
-            display_cols = ['Şirket', col_ton, col_pay]
-            
-            # Tabloyu Göster
             st.dataframe(
-                df_table_filtered[display_cols].style.format({col_pay: "{:.2f}%", col_ton: "{:,.2f}"}), 
+                df_table_filtered[['Şirket', col_ton, col_pay]].style.format({col_pay: "{:.2f}%", col_ton: "{:,.2f}"}), 
                 use_container_width=True
             )
 
         # --- SEKME 2: GELİŞMİŞ ANALİZ ---
         with tab2:
-            col_main, col_side = st.columns([2, 1])
+            pazar_txt, likitgaz_txt, rakip_txt = gelismis_analiz_raporu(df_sehir, secilen_sehir, secilen_segment)
             
-            likitgaz_analizi, rakip_notlari = akilli_analiz_raporu(df_sehir, secilen_sehir, secilen_segment)
+            # 1. PAZAR BÜYÜKLÜĞÜ
+            for line in pazar_txt: st.markdown(line)
             
-            with col_main:
-                for line in likitgaz_analizi:
-                    st.markdown(line)
+            col_l, col_r = st.columns(2)
             
-            with col_side:
-                st.success("📡 Rakip İzleme Radarı")
-                if not rakip_notlari:
-                    st.write("Rakiplerde olağandışı bir hareket tespit edilmedi.")
-                for not_item in rakip_notlari:
-                    st.markdown(not_item)
+            # 2. LİKİTGAZ
+            with col_l:
+                for line in likitgaz_txt: st.markdown(line)
+            
+            # 3. RAKİPLER (AFAKİ DURUMLAR)
+            with col_r:
+                for line in rakip_txt: 
+                    if "🛑" in line or "🔥" in line:
+                        st.error(line) # Kritik durumları kırmızı kutuda göster
+                    else:
+                        st.info(line)
