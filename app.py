@@ -90,27 +90,17 @@ def sehir_ismi_duzelt(sehir):
 # --- ANALİZ MOTORLARI ---
 
 def turkiye_pazar_analizi(df_turkiye_resmi, segment):
-    """
-    Tablo 3.9'un en altındaki TOPLAM satırından gelen veriyi kullanır.
-    """
     col_ton = segment + " Ton"
-    
     son_tarih = df_turkiye_resmi['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
     gecen_yil = son_tarih - relativedelta(years=1)
     son_donem_str = format_tarih_tr(son_tarih)
     
-    # Resmi toplam verilerini çek
-    try:
-        ton_simdi = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == son_tarih][col_ton].values[0]
+    try: ton_simdi = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == son_tarih][col_ton].values[0]
     except: ton_simdi = 0
-        
-    try:
-        ton_gecen_ay = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == onceki_ay][col_ton].values[0]
+    try: ton_gecen_ay = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == onceki_ay][col_ton].values[0]
     except: ton_gecen_ay = 0
-        
-    try:
-        ton_gecen_yil = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == gecen_yil][col_ton].values[0]
+    try: ton_gecen_yil = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == gecen_yil][col_ton].values[0]
     except: ton_gecen_yil = 0
     
     rapor = []
@@ -118,8 +108,6 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     rapor.append(f"Resmi EPDK verilerine göre Türkiye genelinde bu ay toplam **{ton_simdi:,.0f} ton** {segment} satışı gerçekleşti.")
     
     analist_yorumu = ""
-    
-    # Aylık
     if ton_gecen_ay > 0:
         fark = ton_simdi - ton_gecen_ay
         yuzde = (fark / ton_gecen_ay) * 100
@@ -129,7 +117,6 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
         if yuzde > 0: analist_yorumu = "Pazar kısa vadede canlılık gösteriyor."
         else: analist_yorumu = "Kısa vadede talep daralması gözleniyor."
         
-    # Yıllık
     if ton_gecen_yil > 0:
         fark_yil = ton_simdi - ton_gecen_yil
         yuzde_yil = (fark_yil / ton_gecen_yil) * 100
@@ -148,7 +135,8 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
 
 def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
     col_pay = segment + " Pay"
-    col_ton_il = segment + " Ton"
+    col_ton_il = segment + " Ton"   # İl Toplam Tonajı
+    col_ton_sirket = segment + " Ton" # Şirket Tonajı
     
     son_tarih = df_sirket['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
@@ -159,7 +147,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
     likitgaz_raporu = []
     rakip_raporu = []
 
-    # 1. ŞEHİR PAZAR BÜYÜKLÜĞÜ
+    # 1. ŞEHİR PAZAR BÜYÜKLÜĞÜ (İL TABLOSUNDAN)
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()]
     
     try: ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
@@ -188,32 +176,82 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
         pazar_raporu.append("- Yıllık veri yetersiz.")
     pazar_raporu.append("---")
 
-    # 2. LİKİTGAZ ANALİZİ
+    # 2. LİKİTGAZ DETAYLI ANALİZİ (TONAJ ve PAZAR İLİŞKİSİ)
     likitgaz_raporu.append(f"### 🔴 Likitgaz Performans Tarihçesi ({sehir})")
+    
+    # Likitgaz verileri
     df_likit = df_sirket[(df_sirket['Şirket'] == LIKITGAZ_NAME) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
     
     if not df_likit.empty:
         for i in range(len(df_likit)):
             curr = df_likit.iloc[i]
-            tarih_str = format_tarih_tr(curr['Tarih'])
-            pay = curr[col_pay]
+            curr_tarih = curr['Tarih']
+            tarih_str = format_tarih_tr(curr_tarih)
+            
+            likit_pay = curr[col_pay]
+            likit_ton = curr[col_ton_sirket]
             
             if i == 0:
-                likitgaz_raporu.append(f"- **{tarih_str}:** 🏁 Başlangıç: %{pay:.2f}")
+                likitgaz_raporu.append(f"- **{tarih_str}:** 🏁 Başlangıç: %{likit_pay:.2f} (Satış: {likit_ton:,.2f} ton)")
                 continue
             
             prev = df_likit.iloc[i-1]
-            diff_pay = pay - prev[col_pay]
-            icon, yorum = "➡️", "Yatay."
-            if diff_pay > 1.5: icon, yorum = "🚀", "**Güçlü Çıkış!**"
-            elif diff_pay > 0.2: icon, yorum = "↗️", "Yükseliş."
-            elif diff_pay < -1.5: icon, yorum = "🔻", "**Sert Düşüş!**"
-            elif diff_pay < -0.2: icon, yorum = "↘️", "Düşüş."
-            likitgaz_raporu.append(f"- {icon} **{tarih_str}:** Pay: %{pay:.2f} | {yorum}")
+            prev_likit_pay = prev[col_pay]
+            prev_likit_ton = prev[col_ton_sirket]
+            
+            # Pazarın o ayki toplam tonajını bul (Kıyaslama için)
+            try:
+                pazar_ton_curr = df_sehir_resmi[df_sehir_resmi['Tarih'] == curr_tarih][col_ton_il].sum()
+                pazar_ton_prev = df_sehir_resmi[df_sehir_resmi['Tarih'] == prev['Tarih']][col_ton_il].sum()
+            except:
+                pazar_ton_curr = 0
+                pazar_ton_prev = 0
+            
+            # HESAPLAMALAR
+            diff_pay = likit_pay - prev_likit_pay
+            
+            likit_buyume_yuzde = 0
+            if prev_likit_ton > 0:
+                likit_buyume_yuzde = ((likit_ton - prev_likit_ton) / prev_likit_ton) * 100
+                
+            pazar_buyume_yuzde = 0
+            if pazar_ton_prev > 0:
+                pazar_buyume_yuzde = ((pazar_ton_curr - pazar_ton_prev) / pazar_ton_prev) * 100
+
+            # YORUMLAMA MANTIĞI (Tonaj ve Pay İlişkisi)
+            yorum = ""
+            icon = "➡️"
+            
+            # 1. İDEAL SENARYO: Hem satış hem pay artıyor
+            if diff_pay > 0 and likit_buyume_yuzde > 0:
+                icon = "🚀"
+                yorum = f"**Mükemmel Performans!** Satış tonajı **%{likit_buyume_yuzde:.1f}** arttı, pazar payı da **+{diff_pay:.2f}** puan yükseldi. Pazarın üzerinde bir büyüme sağlandı."
+                
+            # 2. KRİZDE BÜYÜME: Satış düştü ama pay arttı (Pazar çöktü, biz az çöktük)
+            elif diff_pay > 0 and likit_buyume_yuzde < 0:
+                icon = "🛡️"
+                yorum = f"**Dirençli Duruş.** Satış tonajı %{abs(likit_buyume_yuzde):.1f} azalsa da, Pazar genelinde %{abs(pazar_buyume_yuzde):.1f} daralma olduğu için rakiplerden pay kapıldı (+{diff_pay:.2f} puan)."
+            
+            # 3. SULANDIRMA (Dilution): Satış arttı ama pay düştü (Pazar bizden hızlı büyüdü)
+            elif diff_pay < 0 and likit_buyume_yuzde > 0:
+                icon = "⚠️"
+                yorum = f"**Pazar Hızına Yetişilemedi.** Satış tonajı **%{likit_buyume_yuzde:.1f} artmasına rağmen**, Pazar genelinde %{pazar_buyume_yuzde:.1f} büyüme olduğu için pazar payı **{diff_pay:.2f}** puan geriledi."
+                
+            # 4. ALARM: Hem satış hem pay düştü
+            elif diff_pay < 0 and likit_buyume_yuzde < 0:
+                icon = "🔻"
+                yorum = f"**Negatif Trend.** Hem satış tonajı (%{likit_buyume_yuzde:.1f}) hem de pazar payı ({diff_pay:.2f} puan) kayıp yaşadı."
+            
+            # 5. Nötr
+            else:
+                yorum = f"Yatay seyir. Tonaj değişimi: %{likit_buyume_yuzde:.1f}."
+
+            # Çıktı Formatı
+            likitgaz_raporu.append(f"- {icon} **{tarih_str}:** Pay: %{likit_pay:.2f} (Satış: {likit_ton:,.2f} ton) | {yorum}")
     else:
         likitgaz_raporu.append("Likitgaz verisi bulunamadı.")
 
-    # 3. RAKİP ANALİZİ
+    # 3. RAKİP ANALİZİ (ZİRVE ve ANLIK)
     rakip_raporu.append(f"### 📡 Rakip Trend Analizi ({sehir})")
     df_sehir_sirket = df_sirket[df_sirket['Şehir'] == sehir]
     son_df = df_sehir_sirket[df_sehir_sirket['Tarih'] == son_tarih].sort_values(col_pay, ascending=False)
@@ -264,7 +302,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
 def verileri_oku():
     tum_veri_sirket = []
     tum_veri_iller = []
-    tum_veri_turkiye = [] # Yeni: Resmi Türkiye Toplamları
+    tum_veri_turkiye = [] 
     sirket_listesi = set()
     
     files = sorted([f for f in os.listdir(DOSYA_KLASORU) if f.endswith('.docx') or f.endswith('.doc')])
@@ -300,7 +338,6 @@ def verileri_oku():
                             if len(cells) < 6: continue
                             il_adi = cells[0].text.strip()
                             
-                            # 1. DURUM: "TOPLAM" SATIRI (Türkiye Geneli Resmi Verisi)
                             if "TOPLAM" in il_adi.upper():
                                 try:
                                     t_ton = sayi_temizle(cells[1].text)
@@ -309,14 +346,11 @@ def verileri_oku():
                                     if t_ton + d_ton + o_ton > 0:
                                         tum_veri_turkiye.append({
                                             'Tarih': tarih,
-                                            'Tüplü Ton': t_ton,
-                                            'Dökme Ton': d_ton,
-                                            'Otogaz Ton': o_ton
+                                            'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
                                         })
                                 except: pass
-                                continue # Toplam satırını il listesine ekleme
+                                continue 
                             
-                            # 2. DURUM: ŞEHİR SATIRLARI
                             if il_adi == "" or "İL" in il_adi.upper(): continue
                             try:
                                 il_duzgun = sehir_ismi_duzelt(il_adi)
@@ -438,7 +472,6 @@ else:
                 tr_rapor = turkiye_pazar_analizi(df_turkiye, secilen_segment)
                 st.info("🇹🇷 Türkiye Geneli Özet Bilgi (Resmi Veri)")
                 for l in tr_rapor: st.markdown(l)
-            else: st.warning("Türkiye geneli verisi bulunamadı.")
             
             st.markdown("---")
             if not df_iller.empty:
