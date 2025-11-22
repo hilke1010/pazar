@@ -84,49 +84,52 @@ def sirket_ismi_standartlastir(ham_isim, mevcut_isimler):
     return ham_isim
 
 def sehir_ismi_duzelt(sehir):
-    # Tablo 3.9'dan gelen şehir isimlerini düzelt (ANKARA -> Ankara)
     if not sehir: return ""
-    # Türkçe karakter sorunu yaşamamak için basit mapping veya title()
-    # Basitçe title() yapalım ama I/İ sorununa dikkat
     return sehir.replace('İ', 'i').replace('I', 'ı').title()
 
-# --- ANALİZ MOTORU ---
+# --- ANALİZ MOTORLARI ---
 
-def turkiye_pazar_analizi(df_iller, segment):
+def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     """
-    Artık df_main (Şirketler) yerine df_iller (Resmi İl Tablosu) kullanılıyor.
+    Tablo 3.9'un en altındaki TOPLAM satırından gelen veriyi kullanır.
     """
     col_ton = segment + " Ton"
     
-    son_tarih = df_iller['Tarih'].max()
+    son_tarih = df_turkiye_resmi['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
     gecen_yil = son_tarih - relativedelta(years=1)
     son_donem_str = format_tarih_tr(son_tarih)
     
-    # Türkiye Toplamı (İller tablosundaki o tarihe ait tüm satırların toplamı)
-    toplamlar = df_iller.groupby('Tarih')[col_ton].sum()
-    
-    ton_simdi = toplamlar.get(son_tarih, 0)
-    ton_gecen_ay = toplamlar.get(onceki_ay, 0)
-    ton_gecen_yil = toplamlar.get(gecen_yil, 0)
+    # Resmi toplam verilerini çek
+    try:
+        ton_simdi = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == son_tarih][col_ton].values[0]
+    except: ton_simdi = 0
+        
+    try:
+        ton_gecen_ay = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == onceki_ay][col_ton].values[0]
+    except: ton_gecen_ay = 0
+        
+    try:
+        ton_gecen_yil = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == gecen_yil][col_ton].values[0]
+    except: ton_gecen_yil = 0
     
     rapor = []
     rapor.append(f"### 🇹🇷 TÜRKİYE GENELİ - {segment.upper()} PAZAR RAPORU ({son_donem_str})")
-    rapor.append(f"Resmi verilere göre Türkiye genelinde bu ay toplam **{ton_simdi:,.0f} ton** {segment} satışı gerçekleşti.")
+    rapor.append(f"Resmi EPDK verilerine göre Türkiye genelinde bu ay toplam **{ton_simdi:,.0f} ton** {segment} satışı gerçekleşti.")
     
     analist_yorumu = ""
     
-    # Aylık Analiz
+    # Aylık
     if ton_gecen_ay > 0:
         fark = ton_simdi - ton_gecen_ay
         yuzde = (fark / ton_gecen_ay) * 100
         durum = "büyüyerek" if yuzde > 0 else "küçülerek"
         icon = "📈" if yuzde > 0 else "📉"
-        rapor.append(f"- **Aylık:** Geçen aya göre pazar **%{abs(yuzde):.1f}** oranında {durum} **{abs(fark):,.0f} ton** fark oluştu. {icon}")
+        rapor.append(f"- **Aylık:** Geçen aya göre pazar **%{abs(yuzde):.1f}** oranında {durum} **{abs(fark):,.0f} ton** fark oluşturdu. {icon}")
         if yuzde > 0: analist_yorumu = "Pazar kısa vadede canlılık gösteriyor."
         else: analist_yorumu = "Kısa vadede talep daralması gözleniyor."
         
-    # Yıllık Analiz
+    # Yıllık
     if ton_gecen_yil > 0:
         fark_yil = ton_simdi - ton_gecen_yil
         yuzde_yil = (fark_yil / ton_gecen_yil) * 100
@@ -144,15 +147,9 @@ def turkiye_pazar_analizi(df_iller, segment):
     return rapor
 
 def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
-    """
-    Pazar Büyüklüğü -> df_iller (Tablo 3.9)
-    Şirket/Rakip Analizi -> df_sirket (Tablo 4.7)
-    """
     col_pay = segment + " Pay"
-    col_ton_sirket = segment + " Ton"  # Şirket verisindeki tonaj
-    col_ton_il = segment + " Ton"      # İl verisindeki tonaj
+    col_ton_il = segment + " Ton"
     
-    # Tarihleri Ayarla
     son_tarih = df_sirket['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
     gecen_yil = son_tarih - relativedelta(years=1)
@@ -162,17 +159,18 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
     likitgaz_raporu = []
     rakip_raporu = []
 
-    # 1. PAZAR BÜYÜKLÜĞÜ (RESMİ İL TABLOSUNDAN)
-    # Seçilen şehre göre filtrele
+    # 1. ŞEHİR PAZAR BÜYÜKLÜĞÜ
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()]
     
-    # Şehir toplamlarını al
-    ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
-    ton_gecen_ay = df_sehir_resmi[df_sehir_resmi['Tarih'] == onceki_ay][col_ton_il].sum()
-    ton_gecen_yil = df_sehir_resmi[df_sehir_resmi['Tarih'] == gecen_yil][col_ton_il].sum()
+    try: ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
+    except: ton_simdi = 0
+    try: ton_gecen_ay = df_sehir_resmi[df_sehir_resmi['Tarih'] == onceki_ay][col_ton_il].sum()
+    except: ton_gecen_ay = 0
+    try: ton_gecen_yil = df_sehir_resmi[df_sehir_resmi['Tarih'] == gecen_yil][col_ton_il].sum()
+    except: ton_gecen_yil = 0
     
     pazar_raporu.append(f"### 🌍 {sehir} - {segment} Pazar Büyüklüğü ({son_donem_str})")
-    pazar_raporu.append(f"Bu ay **{sehir}** genelinde toplam **{ton_simdi:,.0f} ton** satış gerçekleşti (Resmi Veri).")
+    pazar_raporu.append(f"Bu ay **{sehir}** genelinde toplam **{ton_simdi:,.0f} ton** satış gerçekleşti.")
     
     if ton_gecen_ay > 0:
         degisim_ay = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
@@ -188,12 +186,10 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
         pazar_raporu.append(f"- **Yıllık:** {icon} Geçen yıla göre **%{abs(degisim_yil):.1f}** oranında {durum} var.")
     else:
         pazar_raporu.append("- Yıllık veri yetersiz.")
-        
     pazar_raporu.append("---")
 
-    # 2. LİKİTGAZ ANALİZİ (Şirket Tablosundan)
+    # 2. LİKİTGAZ ANALİZİ
     likitgaz_raporu.append(f"### 🔴 Likitgaz Performans Tarihçesi ({sehir})")
-    # Sadece seçilen şehirdeki Likitgaz verisini al
     df_likit = df_sirket[(df_sirket['Şirket'] == LIKITGAZ_NAME) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
     
     if not df_likit.empty:
@@ -208,23 +204,18 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
             
             prev = df_likit.iloc[i-1]
             diff_pay = pay - prev[col_pay]
-            
-            icon = "➡️"
-            yorum = "Yatay."
+            icon, yorum = "➡️", "Yatay."
             if diff_pay > 1.5: icon, yorum = "🚀", "**Güçlü Çıkış!**"
             elif diff_pay > 0.2: icon, yorum = "↗️", "Yükseliş."
             elif diff_pay < -1.5: icon, yorum = "🔻", "**Sert Düşüş!**"
             elif diff_pay < -0.2: icon, yorum = "↘️", "Düşüş."
-            
             likitgaz_raporu.append(f"- {icon} **{tarih_str}:** Pay: %{pay:.2f} | {yorum}")
     else:
         likitgaz_raporu.append("Likitgaz verisi bulunamadı.")
 
-    # 3. RAKİP ANALİZİ (Şirket Tablosundan)
+    # 3. RAKİP ANALİZİ
     rakip_raporu.append(f"### 📡 Rakip Trend Analizi ({sehir})")
-    # Sadece seçilen şehirdeki rakipler
     df_sehir_sirket = df_sirket[df_sirket['Şehir'] == sehir]
-    
     son_df = df_sehir_sirket[df_sehir_sirket['Tarih'] == son_tarih].sort_values(col_pay, ascending=False)
     rakipler = son_df[(son_df['Şirket'] != LIKITGAZ_NAME) & (son_df[col_pay] > 2.0)].head(7)['Şirket'].tolist()
     
@@ -268,11 +259,12 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment):
 
     return pazar_raporu, likitgaz_raporu, rakip_raporu
 
-# --- GÜNCELLENMİŞ VERİ OKUMA (İKİ TABLO TÜRÜNÜ DE OKUR) ---
+# --- VERİ OKUMA ---
 @st.cache_data
 def verileri_oku():
     tum_veri_sirket = []
     tum_veri_iller = []
+    tum_veri_turkiye = [] # Yeni: Resmi Türkiye Toplamları
     sirket_listesi = set()
     
     files = sorted([f for f in os.listdir(DOSYA_KLASORU) if f.endswith('.docx') or f.endswith('.doc')])
@@ -284,67 +276,62 @@ def verileri_oku():
         try: doc = Document(path)
         except: continue
         
-        # 1. PARAGRAFLARI TARAYARAK TABLOLARI BULMA
-        # Word'deki sırayı takip ediyoruz.
-        # Eğer paragrafta "İllere" ve "Dağılımı" varsa sonraki tablo İl tablosudur.
-        # Eğer paragrafta "Tablo" ve ":" varsa sonraki tablo Şirket tablosudur.
-        
         iter_elem = iter_block_items(doc)
         son_baslik = ""
-        son_sehir_sirket = None # Şirket tablosu için şehir
+        son_sehir_sirket = None
         
         for block in iter_elem:
             if isinstance(block, Paragraph):
                 text = block.text.strip()
                 if len(text) > 5:
                     son_baslik = text
-                    # Şirket tablosu başlığı yakalama (Tablo 4.7: Ankara)
                     if text.startswith("Tablo") and ":" in text:
                          parts = text.split(":")
                          if len(parts)>1 and 2<len(parts[1].strip())<40:
                              son_sehir_sirket = parts[1].strip()
-                    else:
-                        son_sehir_sirket = None # Başka bir başlık geldiyse sıfırla
+                    else: son_sehir_sirket = None
 
             elif isinstance(block, Table):
-                # A) İL ÖZET TABLOSU KONTROLÜ (Tablo 3.9 benzeri)
+                # A) İL ÖZET TABLOSU (Tablo 3.9)
                 if "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
                     try:
-                        # İlk satır başlıklar mı?
-                        # Resimdeki yapı: 
-                        # Row 0: İl | Tüplü | Dökme | Otogaz | Toplam (Merged)
-                        # Row 1: ... | Satış | Pay | Satış | Pay ...
-                        # Biz direkt indeksle alalım çünkü format standarttır.
-                        # Col 0: İl Adı
-                        # Col 1: Tüplü Ton, Col 3: Dökme Ton, Col 5: Otogaz Ton
-                        
                         for row in block.rows:
                             cells = row.cells
                             if len(cells) < 6: continue
                             il_adi = cells[0].text.strip()
                             
-                            # Başlık satırlarını atla
-                            if il_adi == "" or "İL" in il_adi.upper() or "TOPLAM" in il_adi.upper():
-                                continue
+                            # 1. DURUM: "TOPLAM" SATIRI (Türkiye Geneli Resmi Verisi)
+                            if "TOPLAM" in il_adi.upper():
+                                try:
+                                    t_ton = sayi_temizle(cells[1].text)
+                                    d_ton = sayi_temizle(cells[3].text)
+                                    o_ton = sayi_temizle(cells[5].text)
+                                    if t_ton + d_ton + o_ton > 0:
+                                        tum_veri_turkiye.append({
+                                            'Tarih': tarih,
+                                            'Tüplü Ton': t_ton,
+                                            'Dökme Ton': d_ton,
+                                            'Otogaz Ton': o_ton
+                                        })
+                                except: pass
+                                continue # Toplam satırını il listesine ekleme
                             
+                            # 2. DURUM: ŞEHİR SATIRLARI
+                            if il_adi == "" or "İL" in il_adi.upper(): continue
                             try:
                                 il_duzgun = sehir_ismi_duzelt(il_adi)
                                 t_ton = sayi_temizle(cells[1].text)
                                 d_ton = sayi_temizle(cells[3].text)
                                 o_ton = sayi_temizle(cells[5].text)
-                                
                                 if t_ton + d_ton + o_ton > 0:
                                     tum_veri_iller.append({
-                                        'Tarih': tarih,
-                                        'Şehir': il_duzgun,
-                                        'Tüplü Ton': t_ton,
-                                        'Dökme Ton': d_ton,
-                                        'Otogaz Ton': o_ton
+                                        'Tarih': tarih, 'Şehir': il_duzgun,
+                                        'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
                                     })
                             except: continue
                     except: pass
 
-                # B) ŞİRKET DAĞILIM TABLOSU KONTROLÜ (Tablo 4.7 vb)
+                # B) ŞİRKET TABLOLARI (Tablo 4.7)
                 elif son_sehir_sirket:
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
@@ -376,16 +363,19 @@ def verileri_oku():
                     
     df_sirket = pd.DataFrame(tum_veri_sirket)
     df_iller = pd.DataFrame(tum_veri_iller)
+    df_turkiye = pd.DataFrame(tum_veri_turkiye)
     
     if not df_sirket.empty:
         df_sirket = df_sirket.sort_values('Tarih')
         df_sirket['Dönem'] = df_sirket['Tarih'].apply(format_tarih_tr)
-        
     if not df_iller.empty:
         df_iller = df_iller.sort_values('Tarih')
         df_iller['Dönem'] = df_iller['Tarih'].apply(format_tarih_tr)
+    if not df_turkiye.empty:
+        df_turkiye = df_turkiye.sort_values('Tarih')
+        df_turkiye['Dönem'] = df_turkiye['Tarih'].apply(format_tarih_tr)
         
-    return df_sirket, df_iller
+    return df_sirket, df_iller, df_turkiye
 
 # --- ARAYÜZ ---
 st.set_page_config(page_title="EPDK Pazar Analizi", layout="wide")
@@ -394,89 +384,73 @@ st.title("📊 EPDK Stratejik Pazar Analizi")
 if not os.path.exists(DOSYA_KLASORU):
     st.error(f"'{DOSYA_KLASORU}' klasörü bulunamadı.")
 else:
-    df_sirket, df_iller = verileri_oku()
+    df_sirket, df_iller, df_turkiye = verileri_oku()
     
     if df_sirket.empty:
         st.warning("Veri yok.")
     else:
         st.sidebar.header("⚙️ Parametreler")
-        # Şehir listesini Şirket tablosundan al (Analiz yapabileceğimiz şehirler)
         sehirler = sorted(df_sirket['Şehir'].unique())
-        # Ankara yoksa ilkini seç
-        default_idx = sehirler.index('Ankara') if 'Ankara' in sehirler else 0
-        secilen_sehir = st.sidebar.selectbox("Şehir", sehirler, index=default_idx)
+        idx_ank = sehirler.index('Ankara') if 'Ankara' in sehirler else 0
+        secilen_sehir = st.sidebar.selectbox("Şehir", sehirler, index=idx_ank)
         
         segmentler = ['Otogaz', 'Tüplü', 'Dökme']
         secilen_segment = st.sidebar.selectbox("Segment", segmentler)
         
-        # Filtreleme
         df_sehir_sirket = df_sirket[df_sirket['Şehir'] == secilen_sehir]
         
         tab1, tab2 = st.tabs(["📈 Görsel & Tablo", "🧠 Makine Öğrenmesi Analizi"])
         
-        # --- SEKME 1: GRAFİK ---
         with tab1:
-            col_filter1, col_filter2 = st.columns(2)
-            with col_filter1:
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
                 sirketler = sorted(df_sehir_sirket['Şirket'].unique())
                 defaults = [LIKITGAZ_NAME] if LIKITGAZ_NAME in sirketler else []
                 top_3 = df_sehir_sirket.groupby('Şirket')[secilen_segment + " Pay"].mean().nlargest(4).index.tolist()
                 defaults += [s for s in top_3 if s != LIKITGAZ_NAME]
-                secilen_sirketler = st.multiselect("Grafik İçin Şirketler", sirketler, default=defaults[:5])
-                
-            with col_filter2:
-                veri_tipi = st.radio("Gösterim Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
-                y_column = secilen_segment + " Pay" if veri_tipi == "Pazar Payı (%)" else secilen_segment + " Ton"
-
+                secilen_sirketler = st.multiselect("Şirketler", sirketler, default=defaults[:5])
+            with col_f2:
+                veri_tipi = st.radio("Veri Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
+                y_col = secilen_segment + " Pay" if veri_tipi == "Pazar Payı (%)" else secilen_segment + " Ton"
+            
             if secilen_sirketler:
                 df_chart = df_sehir_sirket[df_sehir_sirket['Şirket'].isin(secilen_sirketler)]
-                color_map = {s: OTHER_COLORS[i % len(OTHER_COLORS)] for i, s in enumerate(secilen_sirketler)}
+                color_map = {s: OTHER_COLORS[i%len(OTHER_COLORS)] for i,s in enumerate(secilen_sirketler)}
                 if LIKITGAZ_NAME in color_map: color_map[LIKITGAZ_NAME] = LIKITGAZ_COLOR
-                
-                fig = px.line(df_chart, x='Tarih', y=y_column, color='Şirket', markers=True,
-                              color_discrete_map=color_map, title=f"{secilen_sehir} - {secilen_segment} - {veri_tipi}")
+                fig = px.line(df_chart, x='Tarih', y=y_col, color='Şirket', markers=True,
+                              color_discrete_map=color_map, title=f"{secilen_sehir} - {secilen_segment} Trendi")
                 fig.update_xaxes(dtick="M1", tickformat="%b %Y", ticktext=df_chart['Dönem'].unique(), tickvals=df_chart['Tarih'].unique())
                 fig.update_layout(hovermode="x unified", legend=dict(orientation="h", y=1.1))
                 fig.update_traces(patch={"line": {"width": 4}}, selector={"legendgroup": LIKITGAZ_NAME})
                 st.plotly_chart(fig, use_container_width=True)
-            
+                
             st.markdown("---")
-            st.subheader("📋 Dönemsel Sıralama Tablosu")
-            mevcut_donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
-            secilen_tablo_donemi = st.selectbox("Görüntülenecek Dönemi Seçin:", mevcut_donemler)
-            col_ton = secilen_segment + " Ton"
-            col_pay = secilen_segment + " Pay"
-            df_table_filtered = df_sehir_sirket[df_sehir_sirket['Dönem'] == secilen_tablo_donemi].copy()
-            df_table_filtered = df_table_filtered.sort_values(col_pay, ascending=False).reset_index(drop=True)
-            df_table_filtered.index += 1
-            st.dataframe(df_table_filtered[['Şirket', col_ton, col_pay]].style.format({col_pay: "{:.2f}%", col_ton: "{:,.2f}"}), use_container_width=True)
+            st.subheader("📋 Dönemsel Sıralama")
+            donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
+            secilen_donem = st.selectbox("Dönem Seç:", donemler)
+            col_ton, col_pay = secilen_segment+" Ton", secilen_segment+" Pay"
+            df_tbl = df_sehir_sirket[df_sehir_sirket['Dönem'] == secilen_donem].sort_values(col_pay, ascending=False).reset_index(drop=True)
+            df_tbl.index += 1
+            st.dataframe(df_tbl[['Şirket', col_ton, col_pay]].style.format({col_pay: "{:.2f}%", col_ton: "{:,.2f}"}), use_container_width=True)
 
-        # --- SEKME 2: ANALİZ ---
         with tab2:
-            # 1. TÜRKİYE GENELİ (df_iller'den)
-            if not df_iller.empty:
-                turkiye_raporu = turkiye_pazar_analizi(df_iller, secilen_segment)
-                st.info("🇹🇷 Türkiye Geneli Özet Bilgi")
-                for line in turkiye_raporu: st.markdown(line)
-            else:
-                st.warning("İl özeti tablosu okunamadığı için Türkiye geneli analizi yapılamıyor.")
-                
-            st.markdown("---")
+            if not df_turkiye.empty:
+                tr_rapor = turkiye_pazar_analizi(df_turkiye, secilen_segment)
+                st.info("🇹🇷 Türkiye Geneli Özet Bilgi (Resmi Veri)")
+                for l in tr_rapor: st.markdown(l)
+            else: st.warning("Türkiye geneli verisi bulunamadı.")
             
-            # 2. ŞEHİR VE ŞİRKET ANALİZİ
-            # Pazar büyüklüğü için df_iller, şirket detayları için df_sehir_sirket gönderiyoruz
+            st.markdown("---")
             if not df_iller.empty:
-                pazar_txt, likitgaz_txt, rakip_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment)
-                
-                for line in pazar_txt: st.markdown(line)
-                col_l, col_r = st.columns([1, 1])
-                with col_l:
-                    for line in likitgaz_txt: st.markdown(line)
-                with col_r:
-                    for line in rakip_txt: 
-                        if "🛑" in line or "🔴" in line: st.error(line)
-                        elif "🔥" in line or "🟢" in line: st.success(line)
-                        elif "📉" in line or "🟠" in line: st.warning(line)
-                        else: st.info(line)
-            else:
-                 st.error("İl verisi eksik.")
+                p_txt, l_txt, r_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment)
+                for l in p_txt: st.markdown(l)
+                c1, c2 = st.columns(2)
+                with c1:
+                    for l in l_txt: st.markdown(l)
+                with c2:
+                    for l in r_txt:
+                        if "🛑" in l or "🔴" in l: st.error(l)
+                        elif "🔥" in l or "🟢" in l: st.success(l)
+                        elif "📉" in l or "🟠" in l: st.warning(l)
+                        else: st.info(l)
+            else: st.error("İl verileri eksik.")
