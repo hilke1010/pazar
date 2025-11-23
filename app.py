@@ -198,10 +198,18 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU")
     rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
+    # AYLIK PERFORMANS (EKLENDİ)
+    if ton_gecen_ay > 0:
+        yuzde_ay = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
+        icon_ay = "📈" if yuzde_ay > 0 else "📉"
+        rapor.append(f"- **Aylık Performans:** {icon_ay} Geçen aya göre **%{yuzde_ay:+.1f}** değişim var. (Geçen Ay: {ton_gecen_ay:,.0f} ton)")
+
+    # YILLIK PERFORMANS
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
         rapor.append(f"- **Yıllık Performans:** {icon} Geçen yılın aynı ayına göre **%{yuzde_yil:+.1f}** değişim var. (Geçen Sene: **{ton_gecen_yil:,.0f} ton**)")
+    
     return rapor
 
 def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
@@ -209,11 +217,9 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     col_ton_il = segment + " Ton"
     col_ton_sirket = segment + " Ton"
     
-    # --- DÜZELTME: ŞEHİR BAZLI SON TARİH BULMA ---
-    # Global max tarih yerine, seçilen şehrin verisinin olduğu son tarihi buluyoruz.
+    # --- ŞEHİR BAZLI SON TARİH BULMA (Adana Fix) ---
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()].sort_values('Tarih')
     
-    # Eğer şehir verisi boşsa veya hepsi 0 ise, global tarihi kullan (fallback)
     if df_sehir_resmi.empty or df_sehir_resmi[col_ton_il].sum() == 0:
         son_tarih = df_sirket['Tarih'].max()
     else:
@@ -242,7 +248,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
             pazar_raporu.append(f"### 🌍 {sehir} - {segment} Pazar Durumu ({son_donem_str})")
             pazar_raporu.append(f"Bu ay toplam **{ton_simdi:,.0f} ton** satış gerçekleşti.")
             
-            # AYLIK KIYASLAMA (YENİ EKLENDİ)
+            # AYLIK KIYASLAMA
             if ton_onceki_ay > 0:
                 pazar_buyume_ay = ((ton_simdi - ton_onceki_ay) / ton_onceki_ay) * 100
                 icon_ay = "📈" if pazar_buyume_ay > 0 else "📉"
@@ -281,7 +287,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
             sirket_ton_prev = prev[col_ton_sirket]
             sirket_pay_curr = curr[col_pay]
             
-            # Pazar büyümesini hesapla
             pazar_buyume = 0
             try:
                 p_curr = df_sehir_resmi[df_sehir_resmi['Tarih'] == curr_date][col_ton_il].sum()
@@ -289,21 +294,39 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
                 if p_prev > 0: pazar_buyume = ((p_curr - p_prev) / p_prev) * 100
             except: pass
 
-            # Şirket büyümesini hesapla
             sirket_buyume = 0
             if sirket_ton_prev > 0: sirket_buyume = ((sirket_ton_curr - sirket_ton_prev) / sirket_ton_prev) * 100
             
-            # Yorum Mantığı
             yorum = ""
             icon = "➡️"
-            if sirket_buyume > 0 and pazar_buyume > 0:
-                if sirket_buyume > pazar_buyume: icon, yorum = "🚀", "Pazardan hızlı büyüdük."
-                else: icon, yorum = "⚠️", "Büyüdük ama pazara yetişemedik."
-            elif sirket_buyume > 0 and pazar_buyume < 0: icon, yorum = "⭐", "Pazar küçülürken biz büyüdük (Ayrışma)."
-            elif sirket_buyume < 0 and pazar_buyume < 0: icon, yorum = "🔻", "Pazarla birlikte küçüldük."
-            elif sirket_buyume < 0 and pazar_buyume > 0: icon, yorum = "🚨", "Pazar büyürken biz küçüldük (Müşteri Kaybı)."
+            
+            sirket_pay_diff = sirket_pay_curr - prev[col_pay]
 
-            # Geçen Yıl Verisi (Satış Tonajı Dahil)
+            if sirket_pay_diff > 0.05:
+                if sirket_buyume > 0 and pazar_buyume > 0:
+                    icon = "🚀"
+                    yorum = f"**Mükemmel.** Pazar %{pazar_buyume:.1f} büyürken, biz **%{sirket_buyume:.1f}** büyüdük."
+                elif sirket_buyume > 0 and pazar_buyume < 0:
+                    icon = "⭐"
+                    yorum = f"**Ayrışma.** Pazar daralırken (%{pazar_buyume:.1f}), biz satışlarımızı artırdık."
+                elif sirket_buyume < 0 and pazar_buyume < 0:
+                    if abs(sirket_buyume) < abs(pazar_buyume):
+                        icon = "🛡️"
+                        yorum = f"**Dirençli.** Pazar sert düştü (%{pazar_buyume:.1f}), biz daha az etkilendik."
+            elif sirket_pay_diff < -0.05:
+                if sirket_buyume > 0 and pazar_buyume > 0:
+                    if sirket_buyume < pazar_buyume:
+                        icon = "⚠️"
+                        yorum = f"**Yetersiz Büyüme.** Satışımız arttı ANCAK pazar çok daha hızlı büyüdü (%{pazar_buyume:.1f})."
+                elif sirket_buyume < 0 and pazar_buyume > 0:
+                    icon = "🚨"
+                    yorum = f"**Kritik.** Pazar büyürken (%{pazar_buyume:.1f}) biz küçüldük."
+                elif sirket_buyume < 0 and pazar_buyume < 0:
+                    icon = "🔻"
+                    yorum = f"**Negatif.** Pazarla birlikte küçülüyoruz."
+            else:
+                yorum = f"Pazarla paralel hareket."
+
             gy_text = ""
             gy_tarih = curr_date - relativedelta(years=1)
             row_gy = df_odak[df_odak['Tarih'] == gy_tarih]
@@ -316,11 +339,11 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     else:
         sirket_raporu.append("Şirket verisi bulunamadı.")
 
-    # 3. DETAYLI RAKİP TREND ANALİZİ (10 Aylık)
+    # 3. DETAYLI RAKİP TREND ANALİZİ
     rakip_raporu.append(f"### 📡 Rakip Trend Dedektörü ({sehir})")
     
     df_sehir_sirket = df_sirket[df_sirket['Şehir'] == sehir]
-    # Sadece geçerli tarihe kadar olan verileri al
+    # Gelecek verileri temizle
     df_sehir_sirket = df_sehir_sirket[df_sehir_sirket['Tarih'] <= son_tarih]
     
     son_df = df_sehir_sirket[df_sehir_sirket['Tarih'] == son_tarih].sort_values(col_pay, ascending=False)
@@ -521,12 +544,45 @@ else:
         with tab1:
             st.info(f"ℹ️ **Bilgi:** Sol menüdeki **Şehir ({secilen_sehir})** ve **Segment ({secilen_segment})** alanlarını değiştirerek bu sayfadaki analizleri güncelleyebilirsiniz.")
             col_f1, col_f2 = st.columns(2)
+            
+            # --- MULTISELECT HAFIZA SİSTEMİ (Session State) ---
+            # Bu şehirde mevcut olan şirketler
+            mevcut_sirketler_sehirde = sorted(df_sehir_sirket['Şirket'].unique())
+            
+            # Eğer hafızada seçim yoksa veya liste boşsa varsayılan ata
+            if 'secilen_sirketler_state' not in st.session_state or not st.session_state['secilen_sirketler_state']:
+                varsayilan = [LIKITGAZ_NAME] if LIKITGAZ_NAME in mevcut_sirketler_sehirde else []
+                # En büyük 4 rakibi de ekle
+                top_4 = df_sehir_sirket.groupby('Şirket')[col_pay].mean().nlargest(4).index.tolist()
+                varsayilan += [s for s in top_4 if s != LIKITGAZ_NAME and s not in varsayilan]
+                st.session_state['secilen_sirketler_state'] = varsayilan[:5]
+            
+            # Hafızadaki şirketler bu şehirde var mı diye kontrol et (Filtrele)
+            # Yoksa hata verir (örn: X şirketi Ankara'da var ama Adana'da yoksa listeden çıkar)
+            gecerli_secim = [s for s in st.session_state['secilen_sirketler_state'] if s in mevcut_sirketler_sehirde]
+            
+            # Eğer geçerli seçim boş kaldıysa (hiçbiri bu şehirde yoksa), tekrar varsayılan ata
+            if not gecerli_secim:
+                varsayilan = [LIKITGAZ_NAME] if LIKITGAZ_NAME in mevcut_sirketler_sehirde else []
+                top_4 = df_sehir_sirket.groupby('Şirket')[col_pay].mean().nlargest(4).index.tolist()
+                varsayilan += [s for s in top_4 if s != LIKITGAZ_NAME and s not in varsayilan]
+                gecerli_secim = varsayilan[:5]
+            
+            # Widget'ı oluştur
             with col_f1:
-                sirketler = sorted(df_sehir_sirket['Şirket'].unique())
-                defaults = [LIKITGAZ_NAME] if LIKITGAZ_NAME in sirketler else []
-                top_3 = df_sehir_sirket.groupby('Şirket')[col_pay].mean().nlargest(4).index.tolist()
-                defaults += [s for s in top_3 if s != LIKITGAZ_NAME]
-                secilen_sirketler = st.multiselect("Şirketler", sirketler, default=defaults[:5])
+                secilen_sirketler = st.multiselect(
+                    "Şirketler", 
+                    mevcut_sirketler_sehirde, 
+                    default=gecerli_secim,
+                    key="widget_sirketler" # Key vererek state ile bağlıyoruz, ama asıl kontrolü yukarıda yaptık
+                )
+                
+            # Seçim değişirse state'i güncelle (Bir sonraki re-run için)
+            if secilen_sirketler != st.session_state['secilen_sirketler_state']:
+                st.session_state['secilen_sirketler_state'] = secilen_sirketler
+                
+            # --------------------------------------------------
+
             with col_f2:
                 veri_tipi = st.radio("Veri Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
                 y_col = col_pay if veri_tipi == "Pazar Payı (%)" else secilen_segment + " Ton"
@@ -578,6 +634,7 @@ else:
             else:
                 col_ton = secilen_segment + " Ton"
                 df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
+                # ADANA FIX: Sadece 0'dan büyük satışları al
                 df_sehir_toplam = df_sehir_toplam[df_sehir_toplam[col_ton] > 0.1]
                 
                 if not df_sehir_toplam.empty:
@@ -586,9 +643,11 @@ else:
                     df_dolar = dolar_verisi_getir(min_date)
                     
                     if not df_dolar.empty:
+                        # ADANA FIX: Doları da satışın bittiği yerde kes
                         df_dolar = df_dolar[df_dolar['Tarih'] <= last_sales_date]
-                        df_makro = pd.merge(df_sehir_toplam, df_dolar, on='Tarih', how='outer')
-                        df_makro = df_makro.dropna(subset=[col_ton])
+                        
+                        # ADANA FIX: Inner join ile sadece kesişen tarihleri al
+                        df_makro = pd.merge(df_sehir_toplam, df_dolar, on='Tarih', how='inner')
                         
                         fig_makro = go.Figure()
                         fig_makro.add_trace(go.Bar(x=df_makro['Tarih'], y=df_makro[col_ton], name='Pazar (Ton)', marker_color='#3366CC', opacity=0.6))
