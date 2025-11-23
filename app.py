@@ -90,6 +90,11 @@ def sehir_ismi_duzelt(sehir):
 # --- ANALİZ MOTORLARI ---
 
 def turkiye_pazar_analizi(df_turkiye_resmi, segment):
+    # Bu fonksiyon artık Tablo 3.9 (İl Toplamları) yerine Tablo 3.7 (Lisans Sahipleri Toplamı)
+    # üzerinden de çalışabilir veya il toplamlarından.
+    # Ancak "Toplam Pazar Büyüklüğü" genelde İl tablosunun en altındaki TOPLAM satırıdır.
+    # Biz verileri_oku fonksiyonunda bunu "tum_veri_turkiye" (Tablo 3.9 Toplam satırı) olarak alıyoruz.
+    
     col_ton = segment + " Ton"
     son_tarih = df_turkiye_resmi['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
@@ -132,15 +137,23 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     rapor.append(f"> **💡 Analist Görüşü:** {analist_yorumu}")
     return rapor
 
-def sirket_turkiye_analizi(df_sirket, segment, odak_sirket):
+def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
+    """
+    Tablo 3.7'den (df_turkiye_sirketler) gelen RESMİ veriyi kullanır.
+    """
     col_ton = segment + " Ton"
-    df_odak = df_sirket[df_sirket['Şirket'] == odak_sirket]
+    
+    # Tablo 3.7 verisinden şirketi süz
+    df_odak = df_turkiye_sirketler[df_turkiye_sirketler['Şirket'] == odak_sirket]
     
     if df_odak.empty:
-        return [f"{odak_sirket} için Türkiye geneli veri bulunamadı."]
+        return [f"{odak_sirket} için Tablo 3.7'de (Ulusal Veri) kayıt bulunamadı."]
 
+    # Burada groupby yapmaya gerek yok, zaten her ay için 1 satır olur Tablo 3.7'de.
+    # Ama garanti olsun diye sum alalım.
     toplamlar = df_odak.groupby('Tarih')[col_ton].sum()
-    son_tarih = df_sirket['Tarih'].max()
+    
+    son_tarih = df_turkiye_sirketler['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
     gecen_yil = son_tarih - relativedelta(years=1)
     son_donem_str = format_tarih_tr(son_tarih)
@@ -151,13 +164,15 @@ def sirket_turkiye_analizi(df_sirket, segment, odak_sirket):
     
     rapor = []
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU ({son_donem_str})")
-    rapor.append(f"{odak_sirket}, Türkiye genelinde (tüm iller toplamı) bu ay **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
+    rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
+    # Aylık
     if ton_gecen_ay > 0:
         yuzde = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon = "📈" if yuzde > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon} Geçen aya göre satışlar **%{yuzde:+.1f}** değişti.")
     
+    # Yıllık
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
@@ -209,7 +224,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     pazar_raporu.append("---")
 
     # 2. SEÇİLEN ŞİRKET ANALİZİ
-    # Başlığa Segment Eklendi
     sirket_raporu.append(f"### 📊 {odak_sirket} Performans Tarihçesi ({sehir} - {segment})")
     
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
@@ -322,7 +336,8 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
 def verileri_oku():
     tum_veri_sirket = []
     tum_veri_iller = []
-    tum_veri_turkiye = [] 
+    tum_veri_turkiye = [] # Tablo 3.9 Toplamı (Tüm Türkiye Özeti)
+    tum_veri_turkiye_sirket = [] # YENİ: Tablo 3.7 (Şirket Bazlı Ulusal Veri)
     sirket_listesi = set()
     
     files = sorted([f for f in os.listdir(DOSYA_KLASORU) if f.endswith('.docx') or f.endswith('.doc')])
@@ -350,6 +365,7 @@ def verileri_oku():
                     else: son_sehir_sirket = None
 
             elif isinstance(block, Table):
+                # A) İL ÖZET TABLOSU (Tablo 3.9)
                 if "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
                     try:
                         for row in block.rows:
@@ -384,6 +400,39 @@ def verileri_oku():
                             except: continue
                     except: pass
 
+                # YENİ B) TABLO 3.7: LİSANS SAHİPLERİNE GÖRE GENEL TOPLAM
+                elif ("3.7" in son_baslik or ("LİSANS SAHİPLERİNE GÖRE" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper())):
+                    try:
+                        header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
+                        if "tüplü" in header or "otogaz" in header:
+                            for row in block.rows:
+                                cells = row.cells
+                                if len(cells) < 7: continue
+                                isim = cells[0].text.strip()
+                                if any(x in isim.upper() for x in ["LİSANS", "TOPLAM", "UNVANI"]) or not isim: continue
+                                
+                                std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
+                                sirket_listesi.add(std_isim)
+                                try:
+                                    # Tablo 3.7 Yapısı (Genelde Tablo 4.7 ile aynıdır sütun olarak)
+                                    t_ton = sayi_temizle(cells[1].text)
+                                    t_pay = sayi_temizle(cells[2].text)
+                                    d_ton = sayi_temizle(cells[3].text)
+                                    d_pay = sayi_temizle(cells[4].text)
+                                    o_ton = sayi_temizle(cells[5].text)
+                                    o_pay = sayi_temizle(cells[6].text)
+                                    
+                                    if t_ton+t_pay+d_ton+d_pay+o_ton+o_pay > 0:
+                                        tum_veri_turkiye_sirket.append({
+                                            'Tarih': tarih, 'Şirket': std_isim, 
+                                            'Tüplü Pay': t_pay, 'Tüplü Ton': t_ton,
+                                            'Dökme Pay': d_pay, 'Dökme Ton': d_ton,
+                                            'Otogaz Pay': o_pay, 'Otogaz Ton': o_ton
+                                        })
+                                except: continue
+                    except: pass
+
+                # C) ŞİRKET TABLOLARI (Tablo 4.7 vb - ŞEHİR BAZLI)
                 elif son_sehir_sirket:
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
@@ -416,6 +465,7 @@ def verileri_oku():
     df_sirket = pd.DataFrame(tum_veri_sirket)
     df_iller = pd.DataFrame(tum_veri_iller)
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
+    df_turkiye_sirket = pd.DataFrame(tum_veri_turkiye_sirket) # YENİ DF
     
     if not df_sirket.empty:
         df_sirket = df_sirket.sort_values('Tarih')
@@ -426,8 +476,11 @@ def verileri_oku():
     if not df_turkiye.empty:
         df_turkiye = df_turkiye.sort_values('Tarih')
         df_turkiye['Dönem'] = df_turkiye['Tarih'].apply(format_tarih_tr)
+    if not df_turkiye_sirket.empty:
+        df_turkiye_sirket = df_turkiye_sirket.sort_values('Tarih')
+        df_turkiye_sirket['Dönem'] = df_turkiye_sirket['Tarih'].apply(format_tarih_tr)
         
-    return df_sirket, df_iller, df_turkiye
+    return df_sirket, df_iller, df_turkiye, df_turkiye_sirket
 
 # --- ARAYÜZ ---
 st.set_page_config(page_title="EPDK Pazar Analizi", layout="wide")
@@ -436,7 +489,7 @@ st.title("📊 EPDK Stratejik Pazar Analizi")
 if not os.path.exists(DOSYA_KLASORU):
     st.error(f"'{DOSYA_KLASORU}' klasörü bulunamadı.")
 else:
-    df_sirket, df_iller, df_turkiye = verileri_oku()
+    df_sirket, df_iller, df_turkiye, df_turkiye_sirket = verileri_oku()
     
     if df_sirket.empty:
         st.warning("Veri yok.")
@@ -519,8 +572,7 @@ else:
             )
 
         with tab2:
-            # AÇIKLAMA METNİ
-            st.info("ℹ️ **Bilgilendirme:** Bu sayfadaki tüm analizler, sol menüde seçtiğiniz **Şehir** ve **Segment** (Örn: Ankara - Otogaz) kriterlerine göre otomatik oluşturulur.")
+            st.info("ℹ️ **Bilgilendirme:** Bu sayfadaki tüm analizler, sol menüde seçtiğiniz **Şehir** ve **Segment** kriterlerine göre otomatik oluşturulur.")
             
             sirketler_listesi = sorted(df_sehir_sirket['Şirket'].unique())
             varsayilan_index = 0
@@ -535,7 +587,8 @@ else:
                 for l in tr_rapor: st.markdown(l)
                 
                 st.markdown("---")
-                odak_tr_rapor = sirket_turkiye_analizi(df_sirket, secilen_segment, secilen_odak_sirket)
+                # GÜNCELLENMİŞ FONKSİYON: Artık Tablo 3.7'den gelen gerçek veriyi kullanıyor
+                odak_tr_rapor = sirket_turkiye_analizi(df_turkiye_sirket, secilen_segment, secilen_odak_sirket)
                 if len(odak_tr_rapor) > 1:
                      for l in odak_tr_rapor: st.markdown(l)
             
