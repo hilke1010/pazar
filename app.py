@@ -133,20 +133,13 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     return rapor
 
 def sirket_turkiye_analizi(df_sirket, segment, odak_sirket):
-    """
-    Seçilen şirketin Türkiye genelindeki (tüm iller toplamı) performansını analiz eder.
-    """
     col_ton = segment + " Ton"
-    
-    # Sadece seçilen şirketi filtrele
     df_odak = df_sirket[df_sirket['Şirket'] == odak_sirket]
     
     if df_odak.empty:
         return [f"{odak_sirket} için Türkiye geneli veri bulunamadı."]
 
-    # Tarihe göre grupla ve topla
     toplamlar = df_odak.groupby('Tarih')[col_ton].sum()
-    
     son_tarih = df_sirket['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
     gecen_yil = son_tarih - relativedelta(years=1)
@@ -157,17 +150,14 @@ def sirket_turkiye_analizi(df_sirket, segment, odak_sirket):
     ton_gecen_yil = toplamlar.get(gecen_yil, 0)
     
     rapor = []
-    # Başlığı şirkete özel yap
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU ({son_donem_str})")
     rapor.append(f"{odak_sirket}, Türkiye genelinde (tüm iller toplamı) bu ay **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
-    # Aylık
     if ton_gecen_ay > 0:
         yuzde = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon = "📈" if yuzde > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon} Geçen aya göre satışlar **%{yuzde:+.1f}** değişti.")
     
-    # Yıllık
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
@@ -176,9 +166,6 @@ def sirket_turkiye_analizi(df_sirket, segment, odak_sirket):
     return rapor
 
 def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
-    """
-    Dinamik şirket analizi. Artık 'Likitgaz' yerine 'odak_sirket' analiz ediliyor.
-    """
     col_pay = segment + " Pay"
     col_ton_il = segment + " Ton"
     col_ton_sirket = segment + " Ton"
@@ -192,7 +179,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     sirket_raporu = []
     rakip_raporu = []
 
-    # 1. ŞEHİR PAZAR BÜYÜKLÜĞÜ (AYNI KALIR)
+    # 1. ŞEHİR PAZAR BÜYÜKLÜĞÜ
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()]
     
     try: ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
@@ -221,7 +208,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
         pazar_raporu.append("- Yıllık veri yetersiz.")
     pazar_raporu.append("---")
 
-    # 2. SEÇİLEN ŞİRKETİN DETAYLI ANALİZİ
+    # 2. SEÇİLEN ŞİRKET ANALİZİ
     sirket_raporu.append(f"### 📊 {odak_sirket} Performans Tarihçesi ({sehir})")
     
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
@@ -231,11 +218,9 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
             curr = df_odak.iloc[i]
             curr_tarih = curr['Tarih']
             tarih_str = format_tarih_tr(curr_tarih)
-            
             likit_pay = curr[col_pay]
             likit_ton = curr[col_ton_sirket]
             
-            # Geçen Yıl Aynı Ay Verisi (TONAJ ve PAY)
             gy_tarih = curr_tarih - relativedelta(years=1)
             row_gy = df_odak[df_odak['Tarih'] == gy_tarih]
             gy_text = ""
@@ -285,12 +270,11 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     else:
         sirket_raporu.append(f"{odak_sirket} için bu şehirde veri bulunamadı.")
 
-    # 3. RAKİP ANALİZİ (Seçilen Şirket Hariç Diğerleri)
+    # 3. RAKİP ANALİZİ
     rakip_raporu.append(f"### 📡 Rakip Trend Analizi ({sehir})")
     df_sehir_sirket = df_sirket[df_sirket['Şehir'] == sehir]
     son_df = df_sehir_sirket[df_sehir_sirket['Tarih'] == son_tarih].sort_values(col_pay, ascending=False)
     
-    # Seçilen şirketi rakipler listesinden çıkar
     rakipler = son_df[(son_df['Şirket'] != odak_sirket) & (son_df[col_pay] > 2.0)].head(7)['Şirket'].tolist()
     
     yakalanan = 0
@@ -365,7 +349,6 @@ def verileri_oku():
                     else: son_sehir_sirket = None
 
             elif isinstance(block, Table):
-                # A) İL ÖZET TABLOSU
                 if "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
                     try:
                         for row in block.rows:
@@ -400,7 +383,6 @@ def verileri_oku():
                             except: continue
                     except: pass
 
-                # B) ŞİRKET TABLOLARI
                 elif son_sehir_sirket:
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
@@ -494,41 +476,66 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
                 
             st.markdown("---")
-            st.subheader("📋 Dönemsel Sıralama")
+            st.subheader("📋 Dönemsel Sıralama ve Yıllık Karşılaştırma")
             donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
             secilen_donem = st.selectbox("Dönem Seç:", donemler)
-            col_ton, col_pay = secilen_segment+" Ton", secilen_segment+" Pay"
-            df_tbl = df_sehir_sirket[df_sehir_sirket['Dönem'] == secilen_donem].sort_values(col_pay, ascending=False).reset_index(drop=True)
-            df_tbl.index += 1
-            st.dataframe(df_tbl[['Şirket', col_ton, col_pay]].style.format({col_pay: "{:.2f}%", col_ton: "{:,.2f}"}), use_container_width=True)
+            
+            row_ref = df_sehir_sirket[df_sehir_sirket['Dönem'] == secilen_donem].iloc[0]
+            curr_date = row_ref['Tarih']
+            prev_date = curr_date - relativedelta(years=1)
+            prev_donem = format_tarih_tr(prev_date)
+            
+            col_ton = secilen_segment + " Ton"
+            col_pay = secilen_segment + " Pay"
+            
+            df_curr = df_sehir_sirket[df_sehir_sirket['Tarih'] == curr_date][['Şirket', col_ton, col_pay]]
+            df_prev = df_sehir_sirket[df_sehir_sirket['Tarih'] == prev_date][['Şirket', col_ton, col_pay]]
+            
+            df_final = pd.merge(df_curr, df_prev, on='Şirket', how='left', suffixes=('', '_prev'))
+            
+            col_ton_prev_name = f"Ton ({prev_donem})"
+            col_pay_prev_name = f"Pay ({prev_donem})"
+            
+            df_final.rename(columns={
+                col_ton: f"Ton ({secilen_donem})",
+                col_pay: f"Pay ({secilen_donem})",
+                col_ton + '_prev': col_ton_prev_name,
+                col_pay + '_prev': col_pay_prev_name
+            }, inplace=True)
+            
+            df_final.fillna(0, inplace=True)
+            df_final = df_final.sort_values(f"Pay ({secilen_donem})", ascending=False).reset_index(drop=True)
+            df_final.index += 1
+            
+            st.dataframe(
+                df_final.style.format({
+                    f"Ton ({secilen_donem})": "{:,.2f}",
+                    f"Pay ({secilen_donem})": "{:.2f}%",
+                    col_ton_prev_name: "{:,.2f}",
+                    col_pay_prev_name: "{:.2f}%"
+                }),
+                use_container_width=True
+            )
 
         with tab2:
-            # 1. DAĞITICI SEÇİMİ (YENİ)
-            # Seçilen şehirde faaliyet gösteren tüm şirketler
             sirketler_listesi = sorted(df_sehir_sirket['Şirket'].unique())
-            
-            # Varsayılan olarak Likitgaz, yoksa ilk sıradaki
             varsayilan_index = 0
             if LIKITGAZ_NAME in sirketler_listesi:
                 varsayilan_index = sirketler_listesi.index(LIKITGAZ_NAME)
-            
             secilen_odak_sirket = st.selectbox("🔎 Analiz Edilecek Dağıtıcı Seçiniz:", sirketler_listesi, index=varsayilan_index)
             st.markdown("---")
 
-            # 2. TÜRKİYE RAPORU (GENEL)
             if not df_turkiye.empty:
                 tr_rapor = turkiye_pazar_analizi(df_turkiye, secilen_segment)
                 st.info("🇹🇷 Türkiye Geneli Özet Bilgi (Resmi Veri)")
                 for l in tr_rapor: st.markdown(l)
                 
                 st.markdown("---")
-                # SEÇİLEN ŞİRKETİN TÜRKİYE RAPORU
                 odak_tr_rapor = sirket_turkiye_analizi(df_sirket, secilen_segment, secilen_odak_sirket)
                 if len(odak_tr_rapor) > 1:
                      for l in odak_tr_rapor: st.markdown(l)
             
             st.markdown("---")
-            # 3. ŞEHİR DETAYLI ANALİZİ
             if not df_iller.empty:
                 p_txt, s_txt, r_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment, secilen_odak_sirket)
                 for l in p_txt: st.markdown(l)
