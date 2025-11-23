@@ -215,17 +215,14 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     col_ton_il = segment + " Ton"
     col_ton_sirket = segment + " Ton"
     
+    # --- ŞEHİR BAZLI SON TARİH BULMA (Adana Fix) ---
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()].sort_values('Tarih')
     
-    # Gürültü Filtresi
-    if not df_sehir_resmi.empty:
-        ortalama_satis = df_sehir_resmi[col_ton_il].mean()
-        esik_deger = ortalama_satis * 0.1
-        df_gecerli = df_sehir_resmi[df_sehir_resmi[col_ton_il] > esik_deger]
-        if not df_gecerli.empty: son_tarih = df_gecerli['Tarih'].max()
-        else: son_tarih = df_sirket['Tarih'].max()
-    else:
+    if df_sehir_resmi.empty or df_sehir_resmi[col_ton_il].sum() == 0:
         son_tarih = df_sirket['Tarih'].max()
+    else:
+        # 0 olmayan son satışın tarihi
+        son_tarih = df_sehir_resmi[df_sehir_resmi[col_ton_il] > 0]['Tarih'].max()
         
     son_donem_str = format_tarih_tr(son_tarih)
     
@@ -237,23 +234,28 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     try:
         if not df_sehir_resmi.empty:
             ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
+            
             onceki_ay_date = son_tarih - relativedelta(months=1)
             ton_onceki_ay = df_sehir_resmi[df_sehir_resmi['Tarih'] == onceki_ay_date][col_ton_il].sum()
+            
             gecen_yil_date = son_tarih - relativedelta(years=1)
             ton_gecen_yil = df_sehir_resmi[df_sehir_resmi['Tarih'] == gecen_yil_date][col_ton_il].sum()
             
             pazar_raporu.append(f"### 🌍 {sehir} - {segment} Pazar Durumu ({son_donem_str})")
             pazar_raporu.append(f"Bu ay toplam **{ton_simdi:,.0f} ton** satış gerçekleşti.")
             
+            # AYLIK KIYASLAMA
             if ton_onceki_ay > 0:
                 pazar_buyume_ay = ((ton_simdi - ton_onceki_ay) / ton_onceki_ay) * 100
                 icon_ay = "📈" if pazar_buyume_ay > 0 else "📉"
                 pazar_raporu.append(f"- **Aylık:** {icon_ay} Geçen ay **{ton_onceki_ay:,.0f} ton** olan pazar, **%{pazar_buyume_ay:.1f}** değişimle bu seviyeye geldi.")
 
+            # YILLIK KIYASLAMA
             if ton_gecen_yil > 0:
                 pazar_buyume_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
                 icon_yil = "🚀" if pazar_buyume_yil > 0 else "🔻"
                 pazar_raporu.append(f"- **Yıllık:** {icon_yil} Geçen sene **{ton_gecen_yil:,.0f} ton** olan pazar, bu sene **%{pazar_buyume_yil:.1f}** değişimle **{ton_simdi:,.0f} ton** oldu.")
+            
         else:
             pazar_raporu.append("Şehir pazar verisi hesaplanamadı.")
     except:
@@ -262,6 +264,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
 
     # 2. DETAYLI ŞİRKET ANALİZİ
     sirket_raporu.append(f"### 📊 {odak_sirket} Performans Detayı")
+    
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
     
     if not df_odak.empty:
@@ -349,6 +352,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
         
         trend_tipi = "yok"
         seri_uzunlugu = 0
+        
         if paylar[-1] < paylar[-2]:
             trend_tipi = "azalis"
             for i in range(len(paylar)-1, 0, -1):
@@ -597,6 +601,8 @@ else:
                 else:
                     col_ton = secilen_segment + " Ton"
                     df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
+                    # Gürültü Filtresi: 0.1'den büyükleri al
+                    df_sehir_toplam = df_sehir_toplam[df_sehir_toplam[col_ton] > 0.1]
                     
                     if not df_sehir_toplam.empty:
                         last_sales_date = df_sehir_toplam['Tarih'].max()
@@ -659,9 +665,12 @@ else:
                         """)
 
             with tab4:
-                st.caption(f"Sol menüden parametreleri değiştirerek ({secilen_sehir} - {secilen_segment}) tahminini güncelleyebilirsiniz.")
                 col_ton = secilen_segment + " Ton"
                 df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
+                
+                # LİKİTGAZ VERİSİ ÇEK (Yeni)
+                df_likitgaz = df_sehir_sirket[df_sehir_sirket['Şirket'] == LIKITGAZ_NAME].sort_values('Tarih')
+                
                 col_m1, col_m2 = st.columns(2)
                 with col_m1:
                     st.subheader(f"📅 Yıllara Göre Mevsimsel Döngü ({secilen_sehir})")
@@ -673,24 +682,64 @@ else:
                         df_mevsim = df_mevsim.sort_values(['Yıl', 'Ay_No'])
                         fig_cycle = px.line(df_mevsim, x='Ay_Isim', y=col_ton, color='Yıl', markers=True, title=f"{secilen_sehir} Satış Döngüsü")
                         st.plotly_chart(fig_cycle, use_container_width=True)
+                        
                 with col_m2:
                     st.subheader(f"🔮 {secilen_sehir} - {secilen_segment} 1 Yıllık Tahmin")
                     if len(df_sehir_toplam) > 12:
                         last_date = df_sehir_toplam['Tarih'].max()
                         forecast_data = []
+                        
                         for i in range(1, 13):
                             next_date = last_date + relativedelta(months=i)
                             prev_year_date = next_date - relativedelta(years=1)
+                            
+                            # --- PAZAR TAHMİNİ ---
                             mask = (df_sehir_toplam['Tarih'].dt.year == prev_year_date.year) & (df_sehir_toplam['Tarih'].dt.month == prev_year_date.month)
                             past_val_row = df_sehir_toplam[mask]
                             if not past_val_row.empty: val_prev_year = past_val_row[col_ton].values[0]
                             else:
-                                 mask_all_years = (df_sehir_toplam['Tarih'].dt.month == next_date.month)
-                                 val_prev_year = df_sehir_toplam.loc[mask_all_years, col_ton].mean()
+                                mask_all_years = (df_sehir_toplam['Tarih'].dt.month == next_date.month)
+                                val_prev_year = df_sehir_toplam.loc[mask_all_years, col_ton].mean()
+                            
                             trend_val = df_sehir_toplam.tail(3)[col_ton].mean()
-                            forecast_val = (val_prev_year * 0.6) + (trend_val * 0.4) if val_prev_year > 0 else trend_val
-                            forecast_data.append({'Tarih': format_tarih_tr(next_date), 'Tahmin (Ton)': forecast_val})
-                        st.table(pd.DataFrame(forecast_data).style.format({'Tahmin (Ton)': '{:,.0f}'}))
+                            if val_prev_year > 0: forecast_val = (val_prev_year * 0.6) + (trend_val * 0.4)
+                            else: forecast_val = trend_val
+                            
+                            # --- LİKİTGAZ TAHMİNİ (Yeni Eklendi) ---
+                            likit_forecast = 0
+                            if not df_likitgaz.empty:
+                                # Likitgaz için geçen yıl aynı ay
+                                mask_likit = (df_likitgaz['Tarih'].dt.year == prev_year_date.year) & (df_likitgaz['Tarih'].dt.month == prev_year_date.month)
+                                past_row_likit = df_likitgaz[mask_likit]
+                                if not past_row_likit.empty: val_prev_likit = past_row_likit[col_ton].values[0]
+                                else: 
+                                    # Eğer tam geçen yıl yoksa o ayın ortalamasını al
+                                    mask_all_likit = (df_likitgaz['Tarih'].dt.month == next_date.month)
+                                    val_prev_likit = df_likitgaz.loc[mask_all_likit, col_ton].mean()
+                                    if pd.isna(val_prev_likit): val_prev_likit = 0
+                                
+                                # Likitgaz için son 3 ay trend
+                                if len(df_likitgaz) >= 3:
+                                    trend_likit = df_likitgaz.tail(3)[col_ton].mean()
+                                else:
+                                    trend_likit = df_likitgaz[col_ton].mean()
+                                
+                                if val_prev_likit > 0: likit_forecast = (val_prev_likit * 0.6) + (trend_likit * 0.4)
+                                else: likit_forecast = trend_likit
+
+                            forecast_data.append({
+                                'Tarih': format_tarih_tr(next_date),
+                                'Pazar Tahmin (Ton)': forecast_val,
+                                'Likitgaz Tahmin (Ton)': likit_forecast
+                            })
+                            
+                        st.table(pd.DataFrame(forecast_data).style.format({'Pazar Tahmin (Ton)': '{:,.0f}', 'Likitgaz Tahmin (Ton)': '{:,.0f}'}))
+                        st.markdown("""
+                        > **ℹ️ Nasıl Hesaplandı?**
+                        > Bu tahminler, geçmiş verilerin istatistiksel analizine dayanır.
+                        > **Formül:** %60 Mevsimsellik (Geçen yılın aynı ayı) + %40 Trend (Son 3 ayın ortalaması).
+                        > *Bu sayede hem kış/yaz döngüsü hem de şirketin son dönemdeki büyüme/küçülme ivmesi hesaba katılır.*
+                        """)
                     else: st.warning("Yetersiz veri.")
 
             with tab5:
