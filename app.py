@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 from docx import Document
-from docx.document import Document as _Document
+from docx.document import Document as _Document  # Sınıfı _Document olarak alıyoruz
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
 from docx.table import _Cell, Table
@@ -36,7 +36,7 @@ def format_tarih_tr(date_obj):
 def iter_block_items(parent):
     """
     Word dokümanını paragraf ve tablo sırasına göre okur.
-    HATA DÜZELTMESİ: isinstance içinde 'Document' fonksiyonu değil, '_Document' sınıfı kullanılmalı.
+    DÜZELTME: isinstance içinde '_Document' (sınıf) kullanılmalı.
     """
     if isinstance(parent, _Document):
         parent_elm = parent.element.body
@@ -71,7 +71,6 @@ def sirket_ismi_standartlastir(ham_isim, mevcut_isimler):
     ham_isim = ham_isim.strip()
     ham_upper = ham_isim.upper().replace('İ', 'I')
     
-    # Özel düzeltmeler (En sık kullanılanlar)
     ozel_duzeltmeler = {
         "AYTEMİZ": "AYTEMİZ AKARYAKIT DAĞITIM A.Ş.",
         "BALPET": "BALPET PETROL ÜRÜNLERİ TAŞ. SAN. VE TİC. A.Ş.",
@@ -149,8 +148,12 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     return rapor
 
 def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
-    if df_turkiye_sirketler.empty or 'Şirket' not in df_turkiye_sirketler.columns:
+    # Hata Koruması
+    if df_turkiye_sirketler is None or df_turkiye_sirketler.empty:
         return [f"⚠️ {odak_sirket} için Türkiye geneli (Tablo 3.7) verisi okunamadı."]
+    
+    if 'Şirket' not in df_turkiye_sirketler.columns:
+        return [f"⚠️ {odak_sirket} için Türkiye geneli veri yapısı hatalı."]
 
     col_ton = segment + " Ton"
     
@@ -173,13 +176,11 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU ({son_donem_str})")
     rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
-    # Aylık
     if ton_gecen_ay > 0:
         yuzde = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon = "📈" if yuzde > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon} Geçen aya göre satışlar **%{yuzde:+.1f}** değişti.")
     
-    # Yıllık
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
@@ -366,7 +367,7 @@ def verileri_oku():
                                 header_text += c.text.lower()
                     except: continue
                     
-                    # 1. TABLO 3.7
+                    # --- 1. TABLO 3.7 (LİSANS SAHİPLERİNE GÖRE) ---
                     if "lisans" in header_text and ("ürün türü" in header_text or "satış (ton)" in header_text):
                         mevcut_sirket = None
                         for row in table.rows:
@@ -397,13 +398,14 @@ def verileri_oku():
                                         })
                                 except: pass
 
-                    # 2. TABLO 3.9
+                    # --- 2. TABLO 3.9 (İL ÖZETLERİ) ---
                     elif "il" in header_text and "toplam" in header_text and ("otogaz" in header_text or "dökme" in header_text):
                         for row in table.rows:
                             cells = row.cells
                             if len(cells) < 6: continue
                             il_adi = cells[0].text.strip()
                             
+                            # Türkiye Toplamı Satırı
                             if "TOPLAM" in il_adi.upper():
                                 try:
                                     t_ton = sayi_temizle(cells[1].text)
@@ -417,6 +419,7 @@ def verileri_oku():
                                 except: pass
                                 continue
                             
+                            # İl Satırları
                             if il_adi == "" or "İL" in il_adi.upper() or len(il_adi) > 30: continue
                             try:
                                 il_duzgun = sehir_ismi_duzelt(il_adi)
@@ -432,7 +435,8 @@ def verileri_oku():
 
                 except: pass
 
-            # 3. ŞEHİR BAZLI ŞİRKET VERİLERİ
+            # --- 3. ŞEHİR BAZLI ŞİRKET VERİLERİ (ESKİ YÖNTEMLE) ---
+            # Word'deki sırayı takip ediyoruz
             iter_elem = iter_block_items(doc)
             son_sehir_sirket = None
             
