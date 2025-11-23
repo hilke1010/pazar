@@ -69,7 +69,6 @@ def dosya_isminden_tarih(filename):
     return None
 
 def sayi_temizle(text):
-    if not text: return 0.0
     try: return float(text.replace('.', '').replace(',', '.'))
     except: return 0.0
 
@@ -137,12 +136,8 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     """
     Tablo 3.7'den (df_turkiye_sirketler) gelen RESMİ veriyi kullanır.
     """
-    # Güvenlik Kontrolü
-    if df_turkiye_sirketler is None or df_turkiye_sirketler.empty:
+    if df_turkiye_sirketler.empty or 'Şirket' not in df_turkiye_sirketler.columns:
         return [f"⚠️ {odak_sirket} için Türkiye geneli (Tablo 3.7) verisi okunamadı."]
-    
-    if 'Şirket' not in df_turkiye_sirketler.columns:
-        return [f"⚠️ {odak_sirket} için Türkiye geneli veri yapısı hatalı."]
 
     col_ton = segment + " Ton"
     
@@ -165,13 +160,11 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU ({son_donem_str})")
     rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
-    # Aylık
     if ton_gecen_ay > 0:
         yuzde = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon = "📈" if yuzde > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon} Geçen aya göre satışlar **%{yuzde:+.1f}** değişti.")
     
-    # Yıllık
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
@@ -399,54 +392,55 @@ def verileri_oku():
                             except: continue
                     except: pass
 
-                # B) TABLO 3.7: LİSANS SAHİPLERİNE GÖRE (Resimdeki Tablo)
-                # Başlık kontrolü: "Lisans Sahiplerine Göre" ifadesini ara
-                elif "LİSANS SAHİPLERİNE GÖRE" in son_baslik.upper():
+                # B) TABLO 3.7: LİSANS SAHİPLERİNE GÖRE GENEL TOPLAM
+                elif ("3.7" in son_baslik or ("LİSANS SAHİPLERİNE GÖRE" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper())):
                     try:
-                        # Tablo 3.7 yapısını doğrula
-                        header_text = "".join([c.text.lower() for r in block.rows[:2] for c in r.cells])
-                        if "ürün" in header_text and "türü" in header_text:
+                        # Resimdeki yapıya göre sütun indeksleri:
+                        # 0: Şirket (Merged olabilir)
+                        # 1: Tür (Dökme/Otogaz/Tüplü)
+                        # 4: Güncel Satış Ton (Hedef Veri)
+                        
+                        mevcut_sirket = None
+                        
+                        for row in block.rows:
+                            cells = row.cells
+                            # Hücre sayısı kontrolü (En az 5 sütun olmalı)
+                            if len(cells) < 5: continue
                             
-                            current_company = None
+                            # Şirket Adı (Col 0) - Merged cell mantığı
+                            ham_sirket = cells[0].text.strip()
+                            if ham_sirket and "LİSANS" not in ham_sirket.upper():
+                                mevcut_sirket = ham_sirket
                             
-                            for row in block.rows:
-                                cells = row.cells
-                                if len(cells) < 5: continue # En az 5 sütun olmalı (resme göre)
-                                
-                                # 1. Sütun: Şirket Adı (Merged olabilir)
-                                raw_comp = cells[0].text.strip()
-                                if raw_comp and "LİSANS" not in raw_comp.upper() and "TOPLAM" not in raw_comp.upper():
-                                    current_company = raw_comp
-                                
-                                if not current_company: continue
-                                
-                                # 2. Sütun: Ürün Türü
-                                prod_type = cells[1].text.strip().lower()
-                                if "otogaz" not in prod_type and "dökme" not in prod_type and "tüplü" not in prod_type:
-                                    continue
-                                
-                                std_isim = sirket_ismi_standartlastir(current_company, sirket_listesi)
+                            # Eğer satırda şirket adı yoksa, hafızadaki son şirketi kullan
+                            if not mevcut_sirket: continue 
+                            
+                            # Ürün Türü (Col 1)
+                            tur = cells[1].text.strip().lower()
+                            
+                            if "otogaz" in tur or "dökme" in tur or "tüplü" in tur:
+                                std_isim = sirket_ismi_standartlastir(mevcut_sirket, sirket_listesi)
                                 sirket_listesi.add(std_isim)
                                 
-                                # 5. Sütun (Index 4): Güncel Ay Satış (Ton)
-                                # Resimde "Eylül 2025" Satış (Ton) sütunu 4. sırada (0,1,2,3,4)
-                                try:
-                                    satis_ton = sayi_temizle(cells[4].text)
-                                    
-                                    t_ton, d_ton, o_ton = 0, 0, 0
-                                    if "tüplü" in prod_type: t_ton = satis_ton
-                                    elif "dökme" in prod_type: d_ton = satis_ton
-                                    elif "otogaz" in prod_type: o_ton = satis_ton
-                                    
-                                    if t_ton+d_ton+o_ton > 0:
-                                        tum_veri_turkiye_sirket.append({
-                                            'Tarih': tarih, 'Şirket': std_isim, 
-                                            'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
-                                        })
-                                except: continue
+                                satis_ton = sayi_temizle(cells[4].text) # Tablo 3.7'de güncel satış genelde sağ tarafta (indeks 4)
+                                
+                                # Basit bir veri yapısı oluşturalım
+                                # Sadece ilgili segmenti doldur, diğerleri 0
+                                t_ton, d_ton, o_ton = 0, 0, 0
+                                if "tüplü" in tur: t_ton = satis_ton
+                                elif "dökme" in tur: d_ton = satis_ton
+                                elif "otogaz" in tur: o_ton = satis_ton
+                                
+                                if t_ton+d_ton+o_ton > 0:
+                                    tum_veri_turkiye_sirket.append({
+                                        'Tarih': tarih, 'Şirket': std_isim, 
+                                        'Tüplü Ton': t_ton,
+                                        'Dökme Ton': d_ton,
+                                        'Otogaz Ton': o_ton
+                                    })
                     except: pass
 
-                # C) ŞİRKET TABLOLARI (Tablo 4.7 vb - ŞEHİR BAZLI)
+                # C) ŞİRKET TABLOLARI (Tablo 4.7 vb)
                 elif son_sehir_sirket:
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
@@ -480,9 +474,10 @@ def verileri_oku():
     df_iller = pd.DataFrame(tum_veri_iller)
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
     
-    # Tablo 3.7 Boş Gelirse Bile Hata Vermesin
+    # df_turkiye_sirket için düzeltme (Aynı tarih ve şirket için satırları birleştir)
     if tum_veri_turkiye_sirket:
         df_ts = pd.DataFrame(tum_veri_turkiye_sirket)
+        # Tüplü, Dökme ve Otogaz ayrı satırlarda geldiği için bunları groupby ile birleştirmeliyiz
         df_turkiye_sirket = df_ts.groupby(['Tarih', 'Şirket'], as_index=False)[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum()
     else:
         df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
@@ -550,9 +545,7 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
                 
             st.markdown("---")
-            st.subheader(f"📋 {secilen_sehir} - {secilen_segment} | Dönemsel Sıralama ve Yıllık Karşılaştırma")
-            st.info("💡 Tabloyu değiştirmek için sol menüden **Şehir** ve **Segment** seçimi yapınız.")
-            
+            st.subheader("📋 Dönemsel Sıralama ve Yıllık Karşılaştırma")
             donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
             secilen_donem = st.selectbox("Dönem Seç:", donemler)
             
@@ -620,7 +613,6 @@ else:
             if not df_iller.empty:
                 p_txt, s_txt, r_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment, secilen_odak_sirket)
                 for l in p_txt: st.markdown(l)
-                
                 c1, c2 = st.columns(2)
                 with c1:
                     for l in s_txt: st.markdown(l)
