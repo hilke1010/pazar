@@ -209,7 +209,8 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     pazar_raporu.append("---")
 
     # 2. SEÇİLEN ŞİRKET ANALİZİ
-    sirket_raporu.append(f"### 📊 {odak_sirket} Performans Tarihçesi ({sehir})")
+    # Başlığa Segment Eklendi
+    sirket_raporu.append(f"### 📊 {odak_sirket} Performans Tarihçesi ({sehir} - {segment})")
     
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
     
@@ -518,6 +519,9 @@ else:
             )
 
         with tab2:
+            # AÇIKLAMA METNİ
+            st.info("ℹ️ **Bilgilendirme:** Bu sayfadaki tüm analizler, sol menüde seçtiğiniz **Şehir** ve **Segment** (Örn: Ankara - Otogaz) kriterlerine göre otomatik oluşturulur.")
+            
             sirketler_listesi = sorted(df_sehir_sirket['Şirket'].unique())
             varsayilan_index = 0
             if LIKITGAZ_NAME in sirketler_listesi:
