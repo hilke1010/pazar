@@ -12,7 +12,7 @@ import plotly.express as px
 import re
 from dateutil.relativedelta import relativedelta
 
---- AYARLAR ---
+
 
 DOSYA_KLASORU = 'raporlar'
 LIKITGAZ_NAME = "LİKİTGAZ DAĞITIM VE ENDÜSTRİ A.Ş."
@@ -650,3 +650,4 @@ else:
                     elif "📉" in l or "🟠" in l: st.warning(l)
                     else: st.info(l)
         else: st.error("İl verileri eksik.")
+
