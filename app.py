@@ -461,7 +461,7 @@ def verileri_oku():
                             except: continue
                 except: pass
 
-    except: continue
+        except: continue
                     
     df_sirket = pd.DataFrame(tum_veri_sirket)
     df_iller = pd.DataFrame(tum_veri_iller)
@@ -617,3 +617,4 @@ else:
                         elif "📉" in l or "🟠" in l: st.warning(l)
                         else: st.info(l)
             else: st.error("İl verileri eksik.")
+
