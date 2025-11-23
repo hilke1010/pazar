@@ -136,17 +136,20 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     """
     Tablo 3.7'den (df_turkiye_sirketler) gelen RESMİ veriyi kullanır.
     """
+    # HATA ÖNLEME: Eğer veri çerçevesi boşsa veya sütun yoksa
     if df_turkiye_sirketler.empty or 'Şirket' not in df_turkiye_sirketler.columns:
         return [f"⚠️ {odak_sirket} için Türkiye geneli (Tablo 3.7) verisi okunamadı."]
 
     col_ton = segment + " Ton"
     
+    # Tablo 3.7 verisinden şirketi süz
     df_odak = df_turkiye_sirketler[df_turkiye_sirketler['Şirket'] == odak_sirket]
     
     if df_odak.empty:
         return [f"{odak_sirket} için Tablo 3.7'de (Ulusal Veri) kayıt bulunamadı."]
 
     toplamlar = df_odak.groupby('Tarih')[col_ton].sum()
+    
     son_tarih = df_turkiye_sirketler['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
     gecen_yil = son_tarih - relativedelta(years=1)
@@ -160,11 +163,13 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU ({son_donem_str})")
     rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
+    # Aylık
     if ton_gecen_ay > 0:
         yuzde = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon = "📈" if yuzde > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon} Geçen aya göre satışlar **%{yuzde:+.1f}** değişti.")
     
+    # Yıllık
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
@@ -357,7 +362,6 @@ def verileri_oku():
                     else: son_sehir_sirket = None
 
             elif isinstance(block, Table):
-                # A) İL ÖZET TABLOSU (Tablo 3.9)
                 if "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
                     try:
                         for row in block.rows:
@@ -392,55 +396,36 @@ def verileri_oku():
                             except: continue
                     except: pass
 
-                # B) TABLO 3.7: LİSANS SAHİPLERİNE GÖRE GENEL TOPLAM
                 elif ("3.7" in son_baslik or ("LİSANS SAHİPLERİNE GÖRE" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper())):
                     try:
-                        # Resimdeki yapıya göre sütun indeksleri:
-                        # 0: Şirket (Merged olabilir)
-                        # 1: Tür (Dökme/Otogaz/Tüplü)
-                        # 4: Güncel Satış Ton (Hedef Veri)
-                        
-                        mevcut_sirket = None
-                        
-                        for row in block.rows:
-                            cells = row.cells
-                            # Hücre sayısı kontrolü (En az 5 sütun olmalı)
-                            if len(cells) < 5: continue
-                            
-                            # Şirket Adı (Col 0) - Merged cell mantığı
-                            ham_sirket = cells[0].text.strip()
-                            if ham_sirket and "LİSANS" not in ham_sirket.upper():
-                                mevcut_sirket = ham_sirket
-                            
-                            # Eğer satırda şirket adı yoksa, hafızadaki son şirketi kullan
-                            if not mevcut_sirket: continue 
-                            
-                            # Ürün Türü (Col 1)
-                            tur = cells[1].text.strip().lower()
-                            
-                            if "otogaz" in tur or "dökme" in tur or "tüplü" in tur:
-                                std_isim = sirket_ismi_standartlastir(mevcut_sirket, sirket_listesi)
+                        header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
+                        if "tüplü" in header or "otogaz" in header:
+                            for row in block.rows:
+                                cells = row.cells
+                                if len(cells) < 7: continue
+                                isim = cells[0].text.strip()
+                                if any(x in isim.upper() for x in ["LİSANS", "TOPLAM", "UNVANI"]) or not isim: continue
+                                
+                                std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
                                 sirket_listesi.add(std_isim)
-                                
-                                satis_ton = sayi_temizle(cells[4].text) # Tablo 3.7'de güncel satış genelde sağ tarafta (indeks 4)
-                                
-                                # Basit bir veri yapısı oluşturalım
-                                # Sadece ilgili segmenti doldur, diğerleri 0
-                                t_ton, d_ton, o_ton = 0, 0, 0
-                                if "tüplü" in tur: t_ton = satis_ton
-                                elif "dökme" in tur: d_ton = satis_ton
-                                elif "otogaz" in tur: o_ton = satis_ton
-                                
-                                if t_ton+d_ton+o_ton > 0:
-                                    tum_veri_turkiye_sirket.append({
-                                        'Tarih': tarih, 'Şirket': std_isim, 
-                                        'Tüplü Ton': t_ton,
-                                        'Dökme Ton': d_ton,
-                                        'Otogaz Ton': o_ton
-                                    })
+                                try:
+                                    t_ton = sayi_temizle(cells[1].text)
+                                    t_pay = sayi_temizle(cells[2].text)
+                                    d_ton = sayi_temizle(cells[3].text)
+                                    d_pay = sayi_temizle(cells[4].text)
+                                    o_ton = sayi_temizle(cells[5].text)
+                                    o_pay = sayi_temizle(cells[6].text)
+                                    
+                                    if t_ton+t_pay+d_ton+d_pay+o_ton+o_pay > 0:
+                                        tum_veri_turkiye_sirket.append({
+                                            'Tarih': tarih, 'Şirket': std_isim, 
+                                            'Tüplü Pay': t_pay, 'Tüplü Ton': t_ton,
+                                            'Dökme Pay': d_pay, 'Dökme Ton': d_ton,
+                                            'Otogaz Pay': o_pay, 'Otogaz Ton': o_ton
+                                        })
+                                except: continue
                     except: pass
 
-                # C) ŞİRKET TABLOLARI (Tablo 4.7 vb)
                 elif son_sehir_sirket:
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
@@ -474,11 +459,9 @@ def verileri_oku():
     df_iller = pd.DataFrame(tum_veri_iller)
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
     
-    # df_turkiye_sirket için düzeltme (Aynı tarih ve şirket için satırları birleştir)
+    # HATA DÜZELTMESİ: df_turkiye_sirket boşsa bile kolonları olsun
     if tum_veri_turkiye_sirket:
-        df_ts = pd.DataFrame(tum_veri_turkiye_sirket)
-        # Tüplü, Dökme ve Otogaz ayrı satırlarda geldiği için bunları groupby ile birleştirmeliyiz
-        df_turkiye_sirket = df_ts.groupby(['Tarih', 'Şirket'], as_index=False)[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum()
+        df_turkiye_sirket = pd.DataFrame(tum_veri_turkiye_sirket)
     else:
         df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
     
@@ -602,17 +585,20 @@ else:
                 for l in tr_rapor: st.markdown(l)
                 
                 st.markdown("---")
+                
+                # HATA DÜZELTMESİ: Eğer tablo boşsa veya kolon yoksa fonksiyona göndermeden kontrol et
                 if not df_turkiye_sirket.empty and 'Şirket' in df_turkiye_sirket.columns:
                     odak_tr_rapor = sirket_turkiye_analizi(df_turkiye_sirket, secilen_segment, secilen_odak_sirket)
                     if len(odak_tr_rapor) > 1:
                          for l in odak_tr_rapor: st.markdown(l)
                 else:
-                    st.warning("⚠️ Ulusal Şirket Verisi (Tablo 3.7) okunamadı.")
+                    st.warning("⚠️ Ulusal Şirket Verisi (Tablo 3.7) okunamadı. Dosya formatını kontrol edin.")
             
             st.markdown("---")
             if not df_iller.empty:
                 p_txt, s_txt, r_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment, secilen_odak_sirket)
                 for l in p_txt: st.markdown(l)
+                
                 c1, c2 = st.columns(2)
                 with c1:
                     for l in s_txt: st.markdown(l)
