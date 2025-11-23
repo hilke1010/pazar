@@ -545,7 +545,10 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
                 
             st.markdown("---")
-            st.subheader("📋 Dönemsel Sıralama ve Yıllık Karşılaştırma")
+            # --- GÜNCELLENEN KISIM BURASI ---
+            st.subheader(f"📋 Dönemsel Sıralama ve Yıllık Karşılaştırma ({secilen_sehir} - {secilen_segment})")
+            # -------------------------------
+
             donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
             secilen_donem = st.selectbox("Dönem Seç:", donemler)
             
