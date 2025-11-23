@@ -143,7 +143,7 @@ def grafik_bayram_ekle(fig, df_dates):
                                textangle=-90, yanchor="top")
     return fig
 
-# --- ANALİZ MOTORLARI (GÜNCELLENMİŞ DETAYLI) ---
+# --- ANALİZ MOTORLARI ---
 def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     col_ton = segment + " Ton"
     son_tarih = df_turkiye_resmi['Tarih'].max()
@@ -209,10 +209,18 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     col_ton_il = segment + " Ton"
     col_ton_sirket = segment + " Ton"
     
-    son_tarih = df_sirket['Tarih'].max()
-    son_donem_str = format_tarih_tr(son_tarih)
-    
+    # --- DÜZELTME: ŞEHİR BAZLI SON TARİH BULMA ---
+    # Global max tarih yerine, seçilen şehrin verisinin olduğu son tarihi buluyoruz.
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()].sort_values('Tarih')
+    
+    # Eğer şehir verisi boşsa veya hepsi 0 ise, global tarihi kullan (fallback)
+    if df_sehir_resmi.empty or df_sehir_resmi[col_ton_il].sum() == 0:
+        son_tarih = df_sirket['Tarih'].max()
+    else:
+        # 0 olmayan son satışın tarihi
+        son_tarih = df_sehir_resmi[df_sehir_resmi[col_ton_il] > 0]['Tarih'].max()
+        
+    son_donem_str = format_tarih_tr(son_tarih)
     
     pazar_raporu = []
     sirket_raporu = []
@@ -223,6 +231,10 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
         if not df_sehir_resmi.empty:
             ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
             
+            # Geçen Ay
+            onceki_ay_date = son_tarih - relativedelta(months=1)
+            ton_onceki_ay = df_sehir_resmi[df_sehir_resmi['Tarih'] == onceki_ay_date][col_ton_il].sum()
+            
             # Geçen Yıl Aynı Ay
             gecen_yil_date = son_tarih - relativedelta(years=1)
             ton_gecen_yil = df_sehir_resmi[df_sehir_resmi['Tarih'] == gecen_yil_date][col_ton_il].sum()
@@ -230,6 +242,13 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
             pazar_raporu.append(f"### 🌍 {sehir} - {segment} Pazar Durumu ({son_donem_str})")
             pazar_raporu.append(f"Bu ay toplam **{ton_simdi:,.0f} ton** satış gerçekleşti.")
             
+            # AYLIK KIYASLAMA (YENİ EKLENDİ)
+            if ton_onceki_ay > 0:
+                pazar_buyume_ay = ((ton_simdi - ton_onceki_ay) / ton_onceki_ay) * 100
+                icon_ay = "📈" if pazar_buyume_ay > 0 else "📉"
+                pazar_raporu.append(f"- **Aylık:** {icon_ay} Geçen ay **{ton_onceki_ay:,.0f} ton** olan pazar, **%{pazar_buyume_ay:.1f}** değişimle bu seviyeye geldi.")
+
+            # YILLIK KIYASLAMA
             if ton_gecen_yil > 0:
                 pazar_buyume_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
                 icon_yil = "🚀" if pazar_buyume_yil > 0 else "🔻"
@@ -247,6 +266,9 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
     
     if not df_odak.empty:
+        # Sadece son_tarih'e kadar olan verileri al (geleceği gösterme)
+        df_odak = df_odak[df_odak['Tarih'] <= son_tarih]
+        
         for i in range(len(df_odak)):
             if i == 0: continue
             
@@ -294,10 +316,13 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     else:
         sirket_raporu.append("Şirket verisi bulunamadı.")
 
-    # 3. DETAYLI RAKİP TREND ANALİZİ
+    # 3. DETAYLI RAKİP TREND ANALİZİ (10 Aylık)
     rakip_raporu.append(f"### 📡 Rakip Trend Dedektörü ({sehir})")
     
     df_sehir_sirket = df_sirket[df_sirket['Şehir'] == sehir]
+    # Sadece geçerli tarihe kadar olan verileri al
+    df_sehir_sirket = df_sehir_sirket[df_sehir_sirket['Tarih'] <= son_tarih]
+    
     son_df = df_sehir_sirket[df_sehir_sirket['Tarih'] == son_tarih].sort_values(col_pay, ascending=False)
     rakipler = son_df[(son_df['Şirket'] != odak_sirket) & (son_df[col_pay] > 2.0)].head(6)['Şirket'].tolist()
     
@@ -511,12 +536,11 @@ else:
                 color_map = {s: OTHER_COLORS[i%len(OTHER_COLORS)] for i,s in enumerate(secilen_sirketler)}
                 if LIKITGAZ_NAME in color_map: color_map[LIKITGAZ_NAME] = LIKITGAZ_COLOR
                 
-                # --- HATA DÜZELTİLDİ: numpy sort yerine sorted() kullanıldı ---
                 fig = px.line(df_chart, x='Tarih', y=y_col, color='Şirket', markers=True,
                               color_discrete_map=color_map, title=f"{secilen_sehir} - {secilen_segment} Trendi",
                               hover_data={'Tarih': False, 'Tarih_Grafik': True})
                 
-                unique_dates = sorted(df_chart['Tarih'].unique()) # .sort() yerine sorted()
+                unique_dates = sorted(df_chart['Tarih'].unique())
                 tick_texts = [format_tarih_grafik(pd.to_datetime(d)) for d in unique_dates]
                 
                 fig.update_xaxes(tickvals=unique_dates, ticktext=tick_texts)
@@ -570,7 +594,7 @@ else:
                         fig_makro.add_trace(go.Bar(x=df_makro['Tarih'], y=df_makro[col_ton], name='Pazar (Ton)', marker_color='#3366CC', opacity=0.6))
                         fig_makro.add_trace(go.Scatter(x=df_makro['Tarih'], y=df_makro['Dolar Kuru'], name='Dolar (TL)', yaxis='y2', line=dict(color='#DC3912', width=3)))
                         
-                        unique_dates_m = sorted(df_makro['Tarih'].unique()) # .sort() yerine sorted()
+                        unique_dates_m = sorted(df_makro['Tarih'].unique())
                         tick_texts_m = [format_tarih_grafik(pd.to_datetime(d)) for d in unique_dates_m]
                         
                         fig_makro.update_layout(title=f"{secilen_sehir} Hacim vs Dolar", yaxis=dict(title='Satış (Ton)'), yaxis2=dict(title='USD/TL', overlaying='y', side='right'), hovermode='x unified', legend=dict(orientation="h", y=1.1), xaxis=dict(tickvals=unique_dates_m, ticktext=tick_texts_m))
