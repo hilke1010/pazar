@@ -198,13 +198,11 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU")
     rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
-    # AYLIK PERFORMANS
     if ton_gecen_ay > 0:
         yuzde_ay = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon_ay = "📈" if yuzde_ay > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon_ay} Geçen aya göre **%{yuzde_ay:+.1f}** değişim var. (Geçen Ay: {ton_gecen_ay:,.0f} ton)")
 
-    # YILLIK PERFORMANS
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
@@ -217,13 +215,17 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     col_ton_il = segment + " Ton"
     col_ton_sirket = segment + " Ton"
     
-    # --- ŞEHİR BAZLI SON TARİH BULMA (Adana Fix) ---
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()].sort_values('Tarih')
     
-    if df_sehir_resmi.empty or df_sehir_resmi[col_ton_il].sum() == 0:
-        son_tarih = df_sirket['Tarih'].max()
+    # Gürültü Filtresi
+    if not df_sehir_resmi.empty:
+        ortalama_satis = df_sehir_resmi[col_ton_il].mean()
+        esik_deger = ortalama_satis * 0.1
+        df_gecerli = df_sehir_resmi[df_sehir_resmi[col_ton_il] > esik_deger]
+        if not df_gecerli.empty: son_tarih = df_gecerli['Tarih'].max()
+        else: son_tarih = df_sirket['Tarih'].max()
     else:
-        son_tarih = df_sehir_resmi[df_sehir_resmi[col_ton_il] > 0]['Tarih'].max()
+        son_tarih = df_sirket['Tarih'].max()
         
     son_donem_str = format_tarih_tr(son_tarih)
     
@@ -235,28 +237,23 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     try:
         if not df_sehir_resmi.empty:
             ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
-            
             onceki_ay_date = son_tarih - relativedelta(months=1)
             ton_onceki_ay = df_sehir_resmi[df_sehir_resmi['Tarih'] == onceki_ay_date][col_ton_il].sum()
-            
             gecen_yil_date = son_tarih - relativedelta(years=1)
             ton_gecen_yil = df_sehir_resmi[df_sehir_resmi['Tarih'] == gecen_yil_date][col_ton_il].sum()
             
             pazar_raporu.append(f"### 🌍 {sehir} - {segment} Pazar Durumu ({son_donem_str})")
             pazar_raporu.append(f"Bu ay toplam **{ton_simdi:,.0f} ton** satış gerçekleşti.")
             
-            # AYLIK KIYASLAMA
             if ton_onceki_ay > 0:
                 pazar_buyume_ay = ((ton_simdi - ton_onceki_ay) / ton_onceki_ay) * 100
                 icon_ay = "📈" if pazar_buyume_ay > 0 else "📉"
                 pazar_raporu.append(f"- **Aylık:** {icon_ay} Geçen ay **{ton_onceki_ay:,.0f} ton** olan pazar, **%{pazar_buyume_ay:.1f}** değişimle bu seviyeye geldi.")
 
-            # YILLIK KIYASLAMA
             if ton_gecen_yil > 0:
                 pazar_buyume_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
                 icon_yil = "🚀" if pazar_buyume_yil > 0 else "🔻"
                 pazar_raporu.append(f"- **Yıllık:** {icon_yil} Geçen sene **{ton_gecen_yil:,.0f} ton** olan pazar, bu sene **%{pazar_buyume_yil:.1f}** değişimle **{ton_simdi:,.0f} ton** oldu.")
-            
         else:
             pazar_raporu.append("Şehir pazar verisi hesaplanamadı.")
     except:
@@ -265,7 +262,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
 
     # 2. DETAYLI ŞİRKET ANALİZİ
     sirket_raporu.append(f"### 📊 {odak_sirket} Performans Detayı")
-    
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
     
     if not df_odak.empty:
@@ -293,7 +289,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
             if sirket_ton_prev > 0: 
                 sirket_buyume_aylik = ((sirket_ton_curr - sirket_ton_prev) / sirket_ton_prev) * 100
             
-            # --- Yıllık Büyümeyi Hesapla ---
             gy_tarih = curr_date - relativedelta(years=1)
             row_gy = df_odak[df_odak['Tarih'] == gy_tarih]
             sirket_buyume_yillik = 0
@@ -306,10 +301,9 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
                 if gy_ton > 0:
                     sirket_buyume_yillik = ((sirket_ton_curr - gy_ton) / gy_ton) * 100
 
-            # --- YORUM MANTIĞI ---
+            # Yorum Mantığı
             yorum = ""
             icon = "➡️"
-            
             aylik_yorum = ""
             if sirket_buyume_aylik > 0 and pazar_buyume_aylik > 0:
                 if sirket_buyume_aylik > pazar_buyume_aylik:
@@ -355,7 +349,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
         
         trend_tipi = "yok"
         seri_uzunlugu = 0
-        
         if paylar[-1] < paylar[-2]:
             trend_tipi = "azalis"
             for i in range(len(paylar)-1, 0, -1):
@@ -653,7 +646,17 @@ else:
                     fig_hhi = go.Figure(go.Indicator(mode = "gauge+number", value = hhi_score, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "HHI Skoru"}, gauge = {'axis': {'range': [0, 10000]}, 'bar': {'color': "black"}, 'steps': [{'range': [0, 1500], 'color': '#2ECC71'}, {'range': [1500, 2500], 'color': '#F1C40F'}, {'range': [2500, 10000], 'color': '#E74C3C'}]}))
                     c_hhi1, c_hhi2 = st.columns([1, 2])
                     with c_hhi1: st.plotly_chart(fig_hhi, use_container_width=True)
-                    with c_hhi2: st.info("**HHI Nedir?** Pazarın tekelleşme oranıdır. <1500 (Yeşil) Rekabetçi, >2500 (Kırmızı) Tekel.")
+                    with c_hhi2:
+                        st.markdown("""
+                        #### 🧠 HHI (Herfindahl-Hirschman) Endeksi Nedir?
+                        Bu metrik, bir pazarın ne kadar **rekabetçi** veya ne kadar **tekelleşmiş** olduğunu ölçen uluslararası bir standarttır.
+                        
+                        *   🟢 **< 1.500 (Düşük Yoğunluk):** **Rekabetçi Pazar.** Pazarda çok sayıda oyuncu var, hiçbir firma tek başına hakim değil. Pazara giriş kolaydır.
+                        *   🟡 **1.500 - 2.500 (Orta Yoğunluk):** **Oligopol Eğilimi.** Pazar, birkaç büyük şirketin kontrolüne girmeye başlamış. Rekabet zorlaşıyor.
+                        *   🔴 **> 2.500 (Yüksek Yoğunluk):** **Tekelleşmiş Pazar.** Pazarın hakimi 1 veya 2 şirkettir. Yeni oyuncuların barınması veya pazar payı çalması çok zordur.
+                        
+                        > **Stratejik Yorum:** HHI puanı arttıkça, o şehirdeki rekabet azalır ve büyük oyuncuların pazar gücü artar.
+                        """)
 
             with tab4:
                 st.caption(f"Sol menüden parametreleri değiştirerek ({secilen_sehir} - {secilen_segment}) tahminini güncelleyebilirsiniz.")
