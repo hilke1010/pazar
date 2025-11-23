@@ -110,15 +110,9 @@ def sirket_ismi_standartlastir(ham_isim, mevcut_isimler):
         if score >= 88: return match
     return ham_isim
 
-# --- ŞEHİR İSMİ DÜZELTME (GÜNCELLENDİ) ---
 def sehir_ismi_duzelt(sehir):
     if not sehir: return ""
-    # Türkçe karakter ve büyük/küçük harf standardizasyonu
-    sehir = sehir.replace('İ', 'i').replace('I', 'ı').lower()
-    # Fazlalık kelimeleri temizle (Adana İli -> Adana)
-    for cop in [" ili", " valiligi", " bolgesi", " merkez"]:
-        sehir = sehir.replace(cop, "")
-    return sehir.title()
+    return sehir.replace('İ', 'i').replace('I', 'ı').title()
 
 @st.cache_data
 def dolar_verisi_getir(baslangic_tarihi):
@@ -168,6 +162,7 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     rapor.append(f"### 🇹🇷 TÜRKİYE GENELİ - {segment.upper()} PAZAR RAPORU ({son_donem_str})")
     rapor.append(f"Resmi EPDK verilerine göre Türkiye genelinde bu ay toplam **{ton_simdi:,.0f} ton** {segment} satışı gerçekleşti.")
     
+    analist_yorumu = ""
     if ton_gecen_ay > 0:
         fark = ton_simdi - ton_gecen_ay
         yuzde = (fark / ton_gecen_ay) * 100
@@ -220,14 +215,14 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     col_ton_il = segment + " Ton"
     col_ton_sirket = segment + " Ton"
     
-    # --- ŞEHİR BAZLI SON TARİH BULMA ---
+    # --- ŞEHİR BAZLI SON TARİH BULMA (Adana Fix) ---
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()].sort_values('Tarih')
     
-    # Gürültü Filtresi: Çok küçük (örn < 10% ortalama) değerleri yoksay
-    # Bu, Adana'da araya karışan hatalı okumaları eler.
+    # Gürültü Filtresi: Çok küçük (örn < 50 ton) değerleri yoksayarak son tarihi bul
+    # Bu, Adana'da araya karışan "0.5 ton" gibi hatalı okumaları eler.
     if not df_sehir_resmi.empty:
         ortalama_satis = df_sehir_resmi[col_ton_il].mean()
-        esik_deger = ortalama_satis * 0.1 
+        esik_deger = ortalama_satis * 0.1 # Ortalamanın %10'u altındakileri yoksay
         df_gecerli = df_sehir_resmi[df_sehir_resmi[col_ton_il] > esik_deger]
         
         if not df_gecerli.empty:
@@ -257,11 +252,13 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
             pazar_raporu.append(f"### 🌍 {sehir} - {segment} Pazar Durumu ({son_donem_str})")
             pazar_raporu.append(f"Bu ay toplam **{ton_simdi:,.0f} ton** satış gerçekleşti.")
             
+            # AYLIK KIYASLAMA
             if ton_onceki_ay > 0:
                 pazar_buyume_ay = ((ton_simdi - ton_onceki_ay) / ton_onceki_ay) * 100
                 icon_ay = "📈" if pazar_buyume_ay > 0 else "📉"
                 pazar_raporu.append(f"- **Aylık:** {icon_ay} Geçen ay **{ton_onceki_ay:,.0f} ton** olan pazar, **%{pazar_buyume_ay:.1f}** değişimle bu seviyeye geldi.")
 
+            # YILLIK KIYASLAMA
             if ton_gecen_yil > 0:
                 pazar_buyume_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
                 icon_yil = "🚀" if pazar_buyume_yil > 0 else "🔻"
@@ -398,7 +395,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
 
     return pazar_raporu, sirket_raporu, rakip_raporu
 
-# --- VERİ OKUMA (GÜNCELLENMİŞ VE DÜZELTİLMİŞ) ---
+# --- VERİ OKUMA ---
 @st.cache_data
 def verileri_oku():
     tum_veri_sirket = []
@@ -414,7 +411,6 @@ def verileri_oku():
         path = os.path.join(DOSYA_KLASORU, dosya)
         try: doc = Document(path)
         except: continue
-        
         iter_elem = iter_block_items(doc)
         son_baslik = ""
         son_sehir_sirket = None
@@ -422,29 +418,22 @@ def verileri_oku():
         for block in iter_elem:
             if isinstance(block, Paragraph):
                 text = block.text.strip()
-                if len(text) > 4: 
+                if len(text) > 5:
                     son_baslik = text
                     if text.startswith("Tablo") and ":" in text:
                          parts = text.split(":")
-                         if len(parts) > 1:
-                             candidate = parts[1].strip()
-                             # Başlık çok uzunsa muhtemelen açıklama metnidir, şehir değildir
-                             if 2 < len(candidate) < 50: 
-                                 son_sehir_sirket = candidate
-                    elif not text.startswith("Tablo"):
-                         pass 
+                         if len(parts)>1 and 2<len(parts[1].strip())<40:
+                             son_sehir_sirket = parts[1].strip()
+                    else: son_sehir_sirket = None
 
             elif isinstance(block, Table):
-                # 1. TÜRKİYE GENELİ VE İL TOPLAMLARI
                 if "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
                     try:
                         for row in block.rows:
                             cells = row.cells
-                            if len(cells) < 4: continue # Toleransı artırdık
+                            if len(cells) < 6: continue
                             il_adi = cells[0].text.strip()
-                            
-                            # Türkiye Geneli Satırı
-                            if "TOPLAM" in il_adi.upper() and len(cells) >= 6:
+                            if "TOPLAM" in il_adi.upper():
                                 try:
                                     tum_veri_turkiye.append({
                                         'Tarih': tarih,
@@ -454,27 +443,20 @@ def verileri_oku():
                                     })
                                 except: pass
                                 continue 
-                            
-                            if il_adi == "" or ("İL" in il_adi.upper() and "ADANA" not in il_adi.upper()): continue
-                            
+                            if il_adi == "" or "İL" in il_adi.upper(): continue
                             try:
                                 il_duzgun = sehir_ismi_duzelt(il_adi)
-                                t_ton = sayi_temizle(cells[1].text)
-                                d_ton = sayi_temizle(cells[3].text) if len(cells) > 3 else 0
-                                o_ton = sayi_temizle(cells[5].text) if len(cells) > 5 else 0
-                                
+                                t_ton, d_ton, o_ton = sayi_temizle(cells[1].text), sayi_temizle(cells[3].text), sayi_temizle(cells[5].text)
                                 if t_ton + d_ton + o_ton > 0:
                                     tum_veri_iller.append({'Tarih': tarih, 'Şehir': il_duzgun, 'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton})
                             except: continue
                     except: pass
-                
-                # 2. ŞİRKET BAZLI TÜRKİYE VERİSİ
                 elif ("3.7" in son_baslik or ("LİSANS" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper())):
                     try:
                         mevcut_sirket = None
                         for row in block.rows:
                             cells = row.cells
-                            if len(cells) < 4: continue
+                            if len(cells) < 5: continue
                             ham_sirket = cells[0].text.strip()
                             if ham_sirket and "LİSANS" not in ham_sirket.upper(): mevcut_sirket = ham_sirket
                             if not mevcut_sirket: continue 
@@ -482,7 +464,7 @@ def verileri_oku():
                             if any(x in tur for x in ["otogaz","dökme","tüplü"]):
                                 std_isim = sirket_ismi_standartlastir(mevcut_sirket, sirket_listesi)
                                 sirket_listesi.add(std_isim)
-                                satis_ton = sayi_temizle(cells[4].text) if len(cells) > 4 else 0
+                                satis_ton = sayi_temizle(cells[4].text)
                                 t_ton, d_ton, o_ton = 0, 0, 0
                                 if "tüplü" in tur: t_ton = satis_ton
                                 elif "dökme" in tur: d_ton = satis_ton
@@ -490,34 +472,22 @@ def verileri_oku():
                                 if t_ton+d_ton+o_ton > 0:
                                     tum_veri_turkiye_sirket.append({'Tarih': tarih, 'Şirket': std_isim, 'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton})
                     except: pass
-                
-                # 3. DETAYLI ŞEHİR & ŞİRKET TABLOSU (Adana sorunu buradaydı)
                 elif son_sehir_sirket:
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
-                        # Yanlış tablo okumasını engelle (Pay veya Ton yoksa atla)
-                        if any(x in header for x in ["pay", "ton"]) and any(x in header for x in ["tüplü", "dökme", "otogaz"]):
+                        if any(x in header for x in ["tüplü", "dökme", "pay"]):
                             for row in block.rows:
                                 cells = row.cells
-                                if len(cells) < 5: continue 
-                                
+                                if len(cells) < 7: continue
                                 isim = cells[0].text.strip()
-                                if any(x in isim.upper() for x in ["LİSANS", "TOPLAM", "UNVANI"]) or len(isim) < 2: continue
-                                
+                                if any(x in isim.upper() for x in ["LİSANS", "TOPLAM", "UNVANI"]) or not isim: continue
                                 std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
                                 sirket_listesi.add(std_isim)
                                 try:
-                                    def get_val(idx):
-                                        if idx < len(cells): return sayi_temizle(cells[idx].text)
-                                        return 0.0
-                                    
-                                    vals = [get_val(i) for i in range(1,7)]
-                                    
+                                    vals = [sayi_temizle(cells[i].text) for i in range(1,7)]
                                     if sum(vals) > 0:
                                         tum_veri_sirket.append({
-                                            'Tarih': tarih, 
-                                            'Şehir': sehir_ismi_duzelt(son_sehir_sirket), 
-                                            'Şirket': std_isim, 
+                                            'Tarih': tarih, 'Şehir': sehir_ismi_duzelt(son_sehir_sirket), 'Şirket': std_isim, 
                                             'Tüplü Ton': vals[0], 'Tüplü Pay': vals[1],
                                             'Dökme Ton': vals[2], 'Dökme Pay': vals[3],
                                             'Otogaz Ton': vals[4], 'Otogaz Pay': vals[5]
@@ -525,26 +495,13 @@ def verileri_oku():
                                 except: continue
                     except: pass
                     
-    # --- VERİ BİRLEŞTİRME (ADANA FIX) ---
-    # Parçalı tabloları (sayfa sonu bölünmeleri) burada birleştiriyoruz
-    
     df_sirket = pd.DataFrame(tum_veri_sirket)
-    if not df_sirket.empty:
-        df_sirket = df_sirket.groupby(['Tarih', 'Şehir', 'Şirket'], as_index=False).sum()
-
     df_iller = pd.DataFrame(tum_veri_iller)
-    if not df_iller.empty:
-        df_iller = df_iller.groupby(['Tarih', 'Şehir'], as_index=False).sum()
-
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
-    if not df_turkiye.empty:
-        df_turkiye = df_turkiye.groupby(['Tarih'], as_index=False).sum()
-
     if tum_veri_turkiye_sirket:
         df_ts = pd.DataFrame(tum_veri_turkiye_sirket)
         df_turkiye_sirket = df_ts.groupby(['Tarih', 'Şirket'], as_index=False)[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum()
-    else: 
-        df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
+    else: df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
     
     for df in [df_sirket, df_iller, df_turkiye, df_turkiye_sirket]:
         if not df.empty:
@@ -590,9 +547,12 @@ else:
             st.info(f"ℹ️ **Bilgi:** Sol menüdeki **Şehir ({secilen_sehir})** ve **Segment ({secilen_segment})** alanlarını değiştirerek bu sayfadaki analizleri güncelleyebilirsiniz.")
             col_f1, col_f2 = st.columns(2)
             
-            # --- MULTISELECT HAFIZA SİSTEMİ ---
+            # --- MULTISELECT HAFIZA SİSTEMİ (DÜZELTİLDİ) ---
             mevcut_sirketler_sehirde = sorted(df_sehir_sirket['Şirket'].unique())
+            
+            # Key'i dinamik yaparak her şehir değiştiğinde widget'ın sıfırlanmasını engelliyoruz
             session_key = f"secim_{secilen_sehir}"
+            
             if session_key not in st.session_state:
                 varsayilan = [LIKITGAZ_NAME] if LIKITGAZ_NAME in mevcut_sirketler_sehirde else []
                 st.session_state[session_key] = varsayilan
@@ -604,7 +564,10 @@ else:
                     default=st.session_state[session_key],
                     key="widget_" + session_key
                 )
+                
+            # Seçim değişirse hafızaya kaydet
             st.session_state[session_key] = secilen_sirketler
+            # --------------------------------------------------
 
             with col_f2:
                 veri_tipi = st.radio("Veri Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
@@ -658,7 +621,8 @@ else:
                 col_ton = secilen_segment + " Ton"
                 df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
                 
-                # ADANA FIX: Gürültü filtresi
+                # ADANA FIX: Ortalama bazlı gürültü filtresi
+                # Eğer o ayki satış, ortalamanın %10'undan küçükse yoksay (noise)
                 ortalama_satis = df_sehir_toplam[col_ton].mean()
                 esik_deger = ortalama_satis * 0.1
                 df_sehir_toplam = df_sehir_toplam[df_sehir_toplam[col_ton] > esik_deger]
@@ -669,7 +633,10 @@ else:
                     df_dolar = dolar_verisi_getir(min_date)
                     
                     if not df_dolar.empty:
+                        # Doları son satış tarihinde kes
                         df_dolar = df_dolar[df_dolar['Tarih'] <= last_sales_date]
+                        
+                        # Inner Join ile sadece veri olan ayları al
                         df_makro = pd.merge(df_sehir_toplam, df_dolar, on='Tarih', how='inner')
                         
                         fig_makro = go.Figure()
