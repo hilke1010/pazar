@@ -9,8 +9,10 @@ from docx.table import _Cell, Table
 from docx.text.paragraph import Paragraph
 from thefuzz import process
 import plotly.express as px
+import plotly.graph_objects as go
 import re
 from dateutil.relativedelta import relativedelta
+import yfinance as yf # Dolar verisi için eklendi
 
 # --- AYARLAR ---
 DOSYA_KLASORU = 'raporlar'
@@ -87,6 +89,24 @@ def sehir_ismi_duzelt(sehir):
     if not sehir: return ""
     return sehir.replace('İ', 'i').replace('I', 'ı').title()
 
+@st.cache_data
+def dolar_verisi_getir(baslangic_tarihi):
+    """Yahoo Finance'den Dolar/TL verisini çeker ve aylık ortalamaya çevirir."""
+    try:
+        # USD/TL sembolü: TRY=X
+        dolar = yf.download("TRY=X", start=baslangic_tarihi, progress=False)
+        if dolar.empty: return pd.DataFrame()
+        
+        # Aylık ortalama al
+        dolar_aylik = dolar['Close'].resample('MS').mean().reset_index()
+        dolar_aylik.columns = ['Tarih', 'Dolar Kuru']
+        # Tarih formatını timestamp yapalım ki merge edebilelim
+        dolar_aylik['Tarih'] = pd.to_datetime(dolar_aylik['Tarih'])
+        return dolar_aylik
+    except Exception as e:
+        st.warning(f"Dolar verisi çekilemedi: {e}")
+        return pd.DataFrame()
+
 # --- ANALİZ MOTORLARI ---
 
 def turkiye_pazar_analizi(df_turkiye_resmi, segment):
@@ -133,19 +153,12 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     return rapor
 
 def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
-    """
-    Tablo 3.7'den (df_turkiye_sirketler) gelen RESMİ veriyi kullanır.
-    """
     if df_turkiye_sirketler.empty or 'Şirket' not in df_turkiye_sirketler.columns:
         return [f"⚠️ {odak_sirket} için Türkiye geneli (Tablo 3.7) verisi okunamadı."]
-
     col_ton = segment + " Ton"
-    
     df_odak = df_turkiye_sirketler[df_turkiye_sirketler['Şirket'] == odak_sirket]
+    if df_odak.empty: return [f"{odak_sirket} için Tablo 3.7'de (Ulusal Veri) kayıt bulunamadı."]
     
-    if df_odak.empty:
-        return [f"{odak_sirket} için Tablo 3.7'de (Ulusal Veri) kayıt bulunamadı."]
-
     toplamlar = df_odak.groupby('Tarih')[col_ton].sum()
     son_tarih = df_turkiye_sirketler['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
@@ -159,17 +172,14 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     rapor = []
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU ({son_donem_str})")
     rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
-    
     if ton_gecen_ay > 0:
         yuzde = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon = "📈" if yuzde > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon} Geçen aya göre satışlar **%{yuzde:+.1f}** değişti.")
-    
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
         rapor.append(f"- **Yıllık Performans:** {icon} Geçen yılın aynı ayına göre **%{yuzde_yil:+.1f}** değişim var. (Geçen Yıl: {ton_gecen_yil:,.0f} ton)")
-    
     return rapor
 
 def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
@@ -474,10 +484,9 @@ def verileri_oku():
     df_iller = pd.DataFrame(tum_veri_iller)
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
     
-    # df_turkiye_sirket için düzeltme (Aynı tarih ve şirket için satırları birleştir)
+    # df_turkiye_sirket için düzeltme
     if tum_veri_turkiye_sirket:
         df_ts = pd.DataFrame(tum_veri_turkiye_sirket)
-        # Tüplü, Dökme ve Otogaz ayrı satırlarda geldiği için bunları groupby ile birleştirmeliyiz
         df_turkiye_sirket = df_ts.groupby(['Tarih', 'Şirket'], as_index=False)[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum()
     else:
         df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
@@ -519,8 +528,15 @@ else:
         
         df_sehir_sirket = df_sirket[df_sirket['Şehir'] == secilen_sehir]
         
-        tab1, tab2 = st.tabs(["📈 Görsel & Tablo", "🧠 Makine Öğrenmesi Analizi"])
+        # --- TAB YAPISI ---
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📈 Pazar Grafiği", 
+            "💵 Makro & Kriz Analizi", 
+            "🌡️ Mevsimsellik & Tahmin", 
+            "🧠 Stratejik Rapor"
+        ])
         
+        # --- TAB 1: KLASİK GÖRÜNÜM ---
         with tab1:
             col_f1, col_f2 = st.columns(2)
             with col_f1:
@@ -545,10 +561,8 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
                 
             st.markdown("---")
-            # --- GÜNCELLENEN KISIMLAR (Başlık ve Bilgi Notu) ---
             st.subheader(f"📋 Dönemsel Sıralama ve Yıllık Karşılaştırma ({secilen_sehir} - {secilen_segment})")
             st.caption("ℹ️ **Bilgi:** Farklı bir il veya ürün grubu incelemek için sol menüdeki **Şehir** ve **Segment** parametrelerini değiştirebilirsiniz.")
-            # --------------------------------------------------
 
             donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
             secilen_donem = st.selectbox("Dönem Seç:", donemler)
@@ -590,7 +604,150 @@ else:
                 use_container_width=True
             )
 
+        # --- TAB 2: MAKROEKONOMİK & KRİZ ANALİZİ ---
         with tab2:
+            st.subheader("💵 Dolar Kuru ve Pazar Hacmi İlişkisi")
+            st.caption("Aylık ortalama USD/TL kuru ile seçilen şehrin toplam pazar büyüklüğünü karşılaştırır.")
+            
+            # Şehirdeki Toplam Tonajı Bul
+            col_ton = secilen_segment + " Ton"
+            df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
+            
+            # Dolar Verisini Getir
+            if not df_sehir_toplam.empty:
+                min_date = df_sehir_toplam['Tarih'].min()
+                df_dolar = dolar_verisi_getir(min_date)
+                
+                if not df_dolar.empty:
+                    # Dolar ve Tonaj verisini birleştir
+                    df_makro = pd.merge(df_sehir_toplam, df_dolar, on='Tarih', how='inner')
+                    
+                    # Çift Eksenli Grafik
+                    fig_makro = go.Figure()
+                    
+                    # Sol Eksen: Satış Tonajı (Bar)
+                    fig_makro.add_trace(go.Bar(
+                        x=df_makro['Tarih'],
+                        y=df_makro[col_ton],
+                        name='Pazar Hacmi (Ton)',
+                        marker_color='#3366CC',
+                        opacity=0.6
+                    ))
+                    
+                    # Sağ Eksen: Dolar Kuru (Line)
+                    fig_makro.add_trace(go.Scatter(
+                        x=df_makro['Tarih'],
+                        y=df_makro['Dolar Kuru'],
+                        name='Dolar Kuru (TL)',
+                        yaxis='y2',
+                        line=dict(color='#DC3912', width=3)
+                    ))
+                    
+                    fig_makro.update_layout(
+                        title=f"{secilen_sehir} {secilen_segment} Hacmi vs Dolar Kuru",
+                        yaxis=dict(title='Satış (Ton)'),
+                        yaxis2=dict(title='USD/TL Kuru', overlaying='y', side='right'),
+                        hovermode='x unified',
+                        legend=dict(orientation="h", y=1.1)
+                    )
+                    st.plotly_chart(fig_makro, use_container_width=True)
+                else:
+                    st.warning("Dolar verisi internet bağlantısı olmadığı için çekilemedi.")
+            else:
+                st.warning("Grafik için yeterli veri yok.")
+
+            st.markdown("---")
+            st.subheader("🦠 Dönemsel Kriz Analizi (Pandemi & Deprem)")
+            
+            # Dönemleri Tanımla
+            eras = {
+                "Pandemi Öncesi": (pd.Timestamp('2018-01-01'), pd.Timestamp('2020-03-01')),
+                "Pandemi Dönemi": (pd.Timestamp('2020-03-01'), pd.Timestamp('2021-07-01')),
+                "Yeni Normal": (pd.Timestamp('2021-07-01'), pd.Timestamp('2023-01-01')),
+                "Yakın Dönem": (pd.Timestamp('2023-01-01'), pd.Timestamp('2025-01-01'))
+            }
+            
+            era_data = []
+            if not df_sehir_toplam.empty:
+                for era_name, (start, end) in eras.items():
+                    mask = (df_sehir_toplam['Tarih'] >= start) & (df_sehir_toplam['Tarih'] < end)
+                    avg_ton = df_sehir_toplam.loc[mask, col_ton].mean()
+                    if not pd.isna(avg_ton):
+                        era_data.append({'Dönem': era_name, 'Ortalama Aylık Ton': avg_ton})
+                
+                df_era = pd.DataFrame(era_data)
+                if not df_era.empty:
+                    fig_era = px.bar(df_era, x='Dönem', y='Ortalama Aylık Ton', 
+                                     color='Dönem', text_auto='.0f', title="Kriz Dönemleri Karşılaştırması")
+                    st.plotly_chart(fig_era, use_container_width=True)
+                else:
+                    st.info("Bu tarih aralıklarında veri bulunamadı.")
+
+        # --- TAB 3: MEVSİMSELLİK & TAHMİN ---
+        with tab3:
+            col_ton = secilen_segment + " Ton"
+            df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
+            
+            col_m1, col_m2 = st.columns(2)
+            
+            with col_m1:
+                st.subheader("🌡️ Mevsimsellik Isı Haritası")
+                if not df_sehir_toplam.empty:
+                    df_sehir_toplam['Yıl'] = df_sehir_toplam['Tarih'].dt.year
+                    df_sehir_toplam['Ay'] = df_sehir_toplam['Tarih'].dt.month
+                    
+                    # Pivot Tablo
+                    pivot_table = df_sehir_toplam.pivot_table(index='Yıl', columns='Ay', values=col_ton)
+                    # Ay isimlerini düzelt
+                    pivot_table.columns = [TR_AYLAR[c] for c in pivot_table.columns]
+                    
+                    fig_heat = px.imshow(pivot_table, 
+                                         labels=dict(x="Ay", y="Yıl", color="Ton"),
+                                         x=pivot_table.columns,
+                                         y=pivot_table.index,
+                                         color_continuous_scale="Viridis",
+                                         title=f"{secilen_sehir} Satış Yoğunluk Haritası")
+                    st.plotly_chart(fig_heat, use_container_width=True)
+            
+            with col_m2:
+                st.subheader("🔮 3 Aylık Gelecek Tahmini")
+                if len(df_sehir_toplam) > 12:
+                    last_date = df_sehir_toplam['Tarih'].max()
+                    forecast_data = []
+                    
+                    # Basit Tahmin Algoritması:
+                    # Gelecek ayın tahmini = (Geçen yıl aynı ayın satışı + Son 3 ayın ortalaması) / 2
+                    
+                    for i in range(1, 4):
+                        next_date = last_date + relativedelta(months=i)
+                        prev_year_date = next_date - relativedelta(years=1)
+                        
+                        # Geçen yılın aynı ayı verisi
+                        past_val = df_sehir_toplam[df_sehir_toplam['Tarih'] == prev_year_date][col_ton].values
+                        val_prev_year = past_val[0] if len(past_val) > 0 else 0
+                        
+                        # Son 3 ay ortalaması (Trend faktörü)
+                        trend_val = df_sehir_toplam.tail(3)[col_ton].mean()
+                        
+                        # Tahmin Formülü (Mevsimsellik ağırlıklı)
+                        if val_prev_year > 0:
+                            forecast_val = (val_prev_year * 0.7) + (trend_val * 0.3)
+                        else:
+                            forecast_val = trend_val
+                            
+                        forecast_data.append({
+                            'Tarih': format_tarih_tr(next_date),
+                            'Tahmin (Ton)': forecast_val
+                        })
+                    
+                    df_forecast = pd.DataFrame(forecast_data)
+                    st.table(df_forecast.style.format({'Tahmin (Ton)': '{:,.0f}'}))
+                    st.caption("*Tahminler geçmiş yıl verisi ve son trendlerin ağırlıklı ortalamasına dayanır. Yatırım tavsiyesi değildir.")
+                else:
+                    st.warning("Tahmin için en az 1 yıllık veri gerekiyor.")
+
+        # --- TAB 4: MEVCUT STRATEJİK RAPOR ---
+        with tab4:
             st.info("ℹ️ **Bilgilendirme:** Bu sayfadaki tüm analizler, sol menüde seçtiğiniz **Şehir** ve **Segment** kriterlerine göre otomatik oluşturulur.")
             
             sirketler_listesi = sorted(df_sehir_sirket['Şirket'].unique())
