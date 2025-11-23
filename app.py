@@ -134,6 +134,9 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     return rapor
 
 def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
+    """
+    Tablo 3.7'den (df_turkiye_sirketler) gelen RESMİ veriyi kullanır.
+    """
     if df_turkiye_sirketler.empty or 'Şirket' not in df_turkiye_sirketler.columns:
         return [f"⚠️ {odak_sirket} için Türkiye geneli (Tablo 3.7) verisi okunamadı."]
 
@@ -339,117 +342,140 @@ def verileri_oku():
         try: doc = Document(path)
         except: continue
         
+        # Word Dosyasındaki TÜM Tabloları Gez
+        # (Paragraf okumaya gerek yok, direkt tablo yapısını kontrol et)
+        for table in doc.tables:
+            try:
+                # Tablonun ilk birkaç satırını metin olarak al (Başlık kontrolü için)
+                header_text = ""
+                for r in table.rows[:3]:
+                    for c in r.cells:
+                        header_text += c.text.lower()
+                
+                # --- 1. TABLO 3.7 (LİSANS SAHİPLERİNE GÖRE TÜRKİYE GENELİ) ---
+                if "lisans sahibinin" in header_text and "ürün türü" in header_text:
+                    mevcut_sirket = None
+                    for row in table.rows:
+                        cells = row.cells
+                        if len(cells) < 5: continue
+                        
+                        # Şirket Adı (Col 0) - Merged Cell Mantığı
+                        ham_sirket = cells[0].text.strip()
+                        if ham_sirket and "LİSANS" not in ham_sirket.upper() and "TOPLAM" not in ham_sirket.upper():
+                            mevcut_sirket = ham_sirket
+                        
+                        if not mevcut_sirket: continue
+                        
+                        # Ürün Türü (Col 1)
+                        tur = cells[1].text.strip().lower()
+                        if "otogaz" in tur or "dökme" in tur or "tüplü" in tur:
+                            std_isim = sirket_ismi_standartlastir(mevcut_sirket, sirket_listesi)
+                            sirket_listesi.add(std_isim)
+                            
+                            # Satış Verisi (Col 4 - Index 4)
+                            satis_ton = sayi_temizle(cells[4].text)
+                            
+                            t_ton, d_ton, o_ton = 0, 0, 0
+                            if "tüplü" in tur: t_ton = satis_ton
+                            elif "dökme" in tur: d_ton = satis_ton
+                            elif "otogaz" in tur: o_ton = satis_ton
+                            
+                            if t_ton+d_ton+o_ton > 0:
+                                tum_veri_turkiye_sirket.append({
+                                    'Tarih': tarih, 'Şirket': std_isim, 
+                                    'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
+                                })
+
+                # --- 2. TABLO 3.9 (İL ÖZETLERİ) ---
+                elif "il" in header_text and "toplam" in header_text and ("otogaz" in header_text or "dökme" in header_text):
+                    for row in table.rows:
+                        cells = row.cells
+                        if len(cells) < 6: continue
+                        il_adi = cells[0].text.strip()
+                        
+                        # Türkiye Toplamı Satırı
+                        if "TOPLAM" in il_adi.upper():
+                            try:
+                                t_ton = sayi_temizle(cells[1].text)
+                                d_ton = sayi_temizle(cells[3].text)
+                                o_ton = sayi_temizle(cells[5].text)
+                                if t_ton + d_ton + o_ton > 0:
+                                    tum_veri_turkiye.append({
+                                        'Tarih': tarih,
+                                        'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
+                                    })
+                            except: pass
+                            continue
+                        
+                        # İl Satırları
+                        if il_adi == "" or "İL" in il_adi.upper() or len(il_adi) > 30: continue
+                        try:
+                            il_duzgun = sehir_ismi_duzelt(il_adi)
+                            t_ton = sayi_temizle(cells[1].text)
+                            d_ton = sayi_temizle(cells[3].text)
+                            o_ton = sayi_temizle(cells[5].text)
+                            if t_ton + d_ton + o_ton > 0:
+                                tum_veri_iller.append({
+                                    'Tarih': tarih, 'Şehir': il_duzgun,
+                                    'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
+                                })
+                        except: continue
+
+                # --- 3. ŞİRKET DETAY TABLOLARI (ŞEHİR BAZLI) ---
+                # Bu tabloların üstündeki paragrafı okumamız lazım (Şehir adı için)
+                # Ama bu döngüde sadece tabloları geziyoruz.
+                # Şehir bazlı tablolar için ESKİ YÖNTEMİ (Iter Block) kullanmalıyız.
+                # Bu döngü sadece ÖZEL TABLOLAR (3.7 ve 3.9) için.
+                pass 
+
+            except: pass
+
+        # --- ŞEHİR BAZLI ŞİRKET VERİLERİ İÇİN TEKRAR TARAMA (Paragraf + Tablo) ---
         iter_elem = iter_block_items(doc)
-        son_baslik = ""
         son_sehir_sirket = None
         
         for block in iter_elem:
             if isinstance(block, Paragraph):
                 text = block.text.strip()
-                if len(text) > 5:
-                    son_baslik = text
-                    if text.startswith("Tablo") and ":" in text:
-                         parts = text.split(":")
-                         if len(parts)>1 and 2<len(parts[1].strip())<40:
-                             son_sehir_sirket = parts[1].strip()
-                    else: son_sehir_sirket = None
+                if text.startswith("Tablo") and ":" in text:
+                     parts = text.split(":")
+                     if len(parts)>1 and 2<len(parts[1].strip())<40:
+                         son_sehir_sirket = parts[1].strip()
+                else:
+                    if len(text) > 5: son_sehir_sirket = None
 
-            elif isinstance(block, Table):
-                if "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
-                    try:
+            elif isinstance(block, Table) and son_sehir_sirket:
+                # Sadece Şehir Şirket Tablosu Olduğundan Emin Ol
+                # Header kontrolü: Lisans Sahibi olmalı
+                try:
+                    h_text = "".join([c.text.lower() for r in block.rows[:2] for c in r.cells])
+                    if "lisans" in h_text and ("pay" in h_text or "ton" in h_text):
                         for row in block.rows:
                             cells = row.cells
-                            if len(cells) < 6: continue
-                            il_adi = cells[0].text.strip()
+                            if len(cells) < 7: continue
+                            isim = cells[0].text.strip()
+                            if any(x in isim.upper() for x in ["LİSANS", "TOPLAM", "UNVANI"]) or not isim: continue
                             
-                            if "TOPLAM" in il_adi.upper():
-                                try:
-                                    t_ton = sayi_temizle(cells[1].text)
-                                    d_ton = sayi_temizle(cells[3].text)
-                                    o_ton = sayi_temizle(cells[5].text)
-                                    if t_ton + d_ton + o_ton > 0:
-                                        tum_veri_turkiye.append({
-                                            'Tarih': tarih,
-                                            'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
-                                        })
-                                except: pass
-                                continue 
-                            
-                            if il_adi == "" or "İL" in il_adi.upper(): continue
+                            std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
+                            sirket_listesi.add(std_isim)
                             try:
-                                il_duzgun = sehir_ismi_duzelt(il_adi)
                                 t_ton = sayi_temizle(cells[1].text)
+                                t_pay = sayi_temizle(cells[2].text)
                                 d_ton = sayi_temizle(cells[3].text)
+                                d_pay = sayi_temizle(cells[4].text)
                                 o_ton = sayi_temizle(cells[5].text)
-                                if t_ton + d_ton + o_ton > 0:
-                                    tum_veri_iller.append({
-                                        'Tarih': tarih, 'Şehir': il_duzgun,
-                                        'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
+                                o_pay = sayi_temizle(cells[6].text)
+                                if t_ton+t_pay+d_ton+d_pay+o_ton+o_pay > 0:
+                                    tum_veri_sirket.append({
+                                        'Tarih': tarih, 'Şehir': sehir_ismi_duzelt(son_sehir_sirket), 'Şirket': std_isim, 
+                                        'Tüplü Pay': t_pay, 'Tüplü Ton': t_ton,
+                                        'Dökme Pay': d_pay, 'Dökme Ton': d_ton,
+                                        'Otogaz Pay': o_pay, 'Otogaz Ton': o_ton
                                     })
                             except: continue
-                    except: pass
+                except: pass
 
-                elif ("3.7" in son_baslik or ("LİSANS SAHİPLERİNE GÖRE" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper())):
-                    try:
-                        header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
-                        if "tüplü" in header or "otogaz" in header:
-                            mevcut_sirket = None
-                            for row in block.rows:
-                                cells = row.cells
-                                if len(cells) < 5: continue
-                                
-                                ham_sirket = cells[0].text.strip()
-                                if ham_sirket and "LİSANS" not in ham_sirket.upper():
-                                    mevcut_sirket = ham_sirket
-                                
-                                if not mevcut_sirket: continue 
-                                
-                                tur = cells[1].text.strip().lower()
-                                if "otogaz" in tur or "dökme" in tur or "tüplü" in tur:
-                                    std_isim = sirket_ismi_standartlastir(mevcut_sirket, sirket_listesi)
-                                    sirket_listesi.add(std_isim)
-                                    satis_ton = sayi_temizle(cells[4].text)
-                                    
-                                    t_ton, d_ton, o_ton = 0, 0, 0
-                                    if "tüplü" in tur: t_ton = satis_ton
-                                    elif "dökme" in tur: d_ton = satis_ton
-                                    elif "otogaz" in tur: o_ton = satis_ton
-                                    
-                                    if t_ton+d_ton+o_ton > 0:
-                                        tum_veri_turkiye_sirket.append({
-                                            'Tarih': tarih, 'Şirket': std_isim, 
-                                            'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton
-                                        })
-                    except: pass
-
-                elif son_sehir_sirket:
-                    try:
-                        header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
-                        if any(x in header for x in ["tüplü", "dökme", "pay"]):
-                            for row in block.rows:
-                                cells = row.cells
-                                if len(cells) < 7: continue
-                                isim = cells[0].text.strip()
-                                if any(x in isim.upper() for x in ["LİSANS", "TOPLAM", "UNVANI"]) or not isim: continue
-                                
-                                std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
-                                sirket_listesi.add(std_isim)
-                                try:
-                                    t_ton = sayi_temizle(cells[1].text)
-                                    t_pay = sayi_temizle(cells[2].text)
-                                    d_ton = sayi_temizle(cells[3].text)
-                                    d_pay = sayi_temizle(cells[4].text)
-                                    o_ton = sayi_temizle(cells[5].text)
-                                    o_pay = sayi_temizle(cells[6].text)
-                                    if t_ton+t_pay+d_ton+d_pay+o_ton+o_pay > 0:
-                                        tum_veri_sirket.append({
-                                            'Tarih': tarih, 'Şehir': sehir_ismi_duzelt(son_sehir_sirket), 'Şirket': std_isim, 
-                                            'Tüplü Pay': t_pay, 'Tüplü Ton': t_ton,
-                                            'Dökme Pay': d_pay, 'Dökme Ton': d_ton,
-                                            'Otogaz Pay': o_pay, 'Otogaz Ton': o_ton
-                                        })
-                                except: continue
-                    except: pass
+    except: continue
                     
     df_sirket = pd.DataFrame(tum_veri_sirket)
     df_iller = pd.DataFrame(tum_veri_iller)
@@ -524,7 +550,6 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
                 
             st.markdown("---")
-            # İSTENİLEN DEĞİŞİKLİK BURADA YAPILDI
             st.subheader(f"📋 {secilen_sehir} - {secilen_segment} | Dönemsel Sıralama ve Yıllık Karşılaştırma")
             st.info(f"ℹ️ **Bilgi:** Bu tablo, sol menüden seçtiğiniz **{secilen_sehir}** ve **{secilen_segment}** kriterlerine göre filtrelenmiştir.")
             
