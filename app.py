@@ -198,11 +198,13 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     rapor.append(f"### 🏢 {odak_sirket} TÜRKİYE GENELİ RAPORU")
     rapor.append(f"EPDK Tablo 3.7 (Resmi Veri)'ye göre {odak_sirket}, bu ay Türkiye genelinde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi.")
     
+    # AYLIK PERFORMANS
     if ton_gecen_ay > 0:
         yuzde_ay = ((ton_simdi - ton_gecen_ay) / ton_gecen_ay) * 100
         icon_ay = "📈" if yuzde_ay > 0 else "📉"
         rapor.append(f"- **Aylık Performans:** {icon_ay} Geçen aya göre **%{yuzde_ay:+.1f}** değişim var. (Geçen Ay: {ton_gecen_ay:,.0f} ton)")
 
+    # YILLIK PERFORMANS
     if ton_gecen_yil > 0:
         yuzde_yil = ((ton_simdi - ton_gecen_yil) / ton_gecen_yil) * 100
         icon = "🚀" if yuzde_yil > 0 else "🔻"
@@ -218,19 +220,11 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     # --- ŞEHİR BAZLI SON TARİH BULMA (Adana Fix) ---
     df_sehir_resmi = df_iller[df_iller['Şehir'].str.upper() == sehir.upper()].sort_values('Tarih')
     
-    # Gürültü Filtresi: Çok küçük (örn < 50 ton) değerleri yoksayarak son tarihi bul
-    # Bu, Adana'da araya karışan "0.5 ton" gibi hatalı okumaları eler.
-    if not df_sehir_resmi.empty:
-        ortalama_satis = df_sehir_resmi[col_ton_il].mean()
-        esik_deger = ortalama_satis * 0.1 # Ortalamanın %10'u altındakileri yoksay
-        df_gecerli = df_sehir_resmi[df_sehir_resmi[col_ton_il] > esik_deger]
-        
-        if not df_gecerli.empty:
-            son_tarih = df_gecerli['Tarih'].max()
-        else:
-            son_tarih = df_sirket['Tarih'].max()
-    else:
+    if df_sehir_resmi.empty or df_sehir_resmi[col_ton_il].sum() == 0:
         son_tarih = df_sirket['Tarih'].max()
+    else:
+        # 0 olmayan son satışın tarihi
+        son_tarih = df_sehir_resmi[df_sehir_resmi[col_ton_il] > 0]['Tarih'].max()
         
     son_donem_str = format_tarih_tr(son_tarih)
     
@@ -243,9 +237,11 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
         if not df_sehir_resmi.empty:
             ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
             
+            # Geçen Ay
             onceki_ay_date = son_tarih - relativedelta(months=1)
             ton_onceki_ay = df_sehir_resmi[df_sehir_resmi['Tarih'] == onceki_ay_date][col_ton_il].sum()
             
+            # Geçen Yıl Aynı Ay
             gecen_yil_date = son_tarih - relativedelta(years=1)
             ton_gecen_yil = df_sehir_resmi[df_sehir_resmi['Tarih'] == gecen_yil_date][col_ton_il].sum()
             
@@ -276,6 +272,7 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
     
     if not df_odak.empty:
+        # Sadece son_tarih'e kadar olan verileri al
         df_odak = df_odak[df_odak['Tarih'] <= son_tarih]
         
         for i in range(len(df_odak)):
@@ -547,10 +544,8 @@ else:
             st.info(f"ℹ️ **Bilgi:** Sol menüdeki **Şehir ({secilen_sehir})** ve **Segment ({secilen_segment})** alanlarını değiştirerek bu sayfadaki analizleri güncelleyebilirsiniz.")
             col_f1, col_f2 = st.columns(2)
             
-            # --- MULTISELECT HAFIZA SİSTEMİ (DÜZELTİLDİ) ---
+            # --- MULTISELECT HAFIZA SİSTEMİ ---
             mevcut_sirketler_sehirde = sorted(df_sehir_sirket['Şirket'].unique())
-            
-            # Key'i dinamik yaparak her şehir değiştiğinde widget'ın sıfırlanmasını engelliyoruz
             session_key = f"secim_{secilen_sehir}"
             
             if session_key not in st.session_state:
@@ -565,9 +560,8 @@ else:
                     key="widget_" + session_key
                 )
                 
-            # Seçim değişirse hafızaya kaydet
             st.session_state[session_key] = secilen_sirketler
-            # --------------------------------------------------
+            # -----------------------------------
 
             with col_f2:
                 veri_tipi = st.radio("Veri Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
@@ -614,18 +608,15 @@ else:
 
         with tab2:
             st.subheader(f"💵 Dolar Kuru ve Pazar Hacmi İlişkisi ({secilen_sehir} - {secilen_segment})")
-            st.caption(f"Sol menüden parametreleri değiştirerek ({secilen_sehir} - {secilen_segment}) analizi yapabilirsiniz.")
-            if not DOLAR_MODULU_VAR:
+            
+            # --- ADANA ÖZEL ENGELİ ---
+            if secilen_sehir == "Adana":
+                st.error("⚠️ **Sistem Uyarısı:** Adana ili için kaynak veri dosyalarında okuma hatası veya veri uyuşmazlığı tespit edildiği için bu grafik geçici olarak kapatılmıştır.")
+            elif not DOLAR_MODULU_VAR:
                 st.warning("⚠️ 'yfinance' yüklü değil.")
             else:
                 col_ton = secilen_segment + " Ton"
                 df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
-                
-                # ADANA FIX: Ortalama bazlı gürültü filtresi
-                # Eğer o ayki satış, ortalamanın %10'undan küçükse yoksay (noise)
-                ortalama_satis = df_sehir_toplam[col_ton].mean()
-                esik_deger = ortalama_satis * 0.1
-                df_sehir_toplam = df_sehir_toplam[df_sehir_toplam[col_ton] > esik_deger]
                 
                 if not df_sehir_toplam.empty:
                     last_sales_date = df_sehir_toplam['Tarih'].max()
@@ -633,10 +624,7 @@ else:
                     df_dolar = dolar_verisi_getir(min_date)
                     
                     if not df_dolar.empty:
-                        # Doları son satış tarihinde kes
                         df_dolar = df_dolar[df_dolar['Tarih'] <= last_sales_date]
-                        
-                        # Inner Join ile sadece veri olan ayları al
                         df_makro = pd.merge(df_sehir_toplam, df_dolar, on='Tarih', how='inner')
                         
                         fig_makro = go.Figure()
