@@ -3,4 +3,5 @@ pandas
 python-docx
 thefuzz
 plotly
-openpyxl
+python-dateutil
+yfinance
