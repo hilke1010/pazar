@@ -90,11 +90,6 @@ def sehir_ismi_duzelt(sehir):
 # --- ANALİZ MOTORLARI ---
 
 def turkiye_pazar_analizi(df_turkiye_resmi, segment):
-    # Bu fonksiyon artık Tablo 3.9 (İl Toplamları) yerine Tablo 3.7 (Lisans Sahipleri Toplamı)
-    # üzerinden de çalışabilir veya il toplamlarından.
-    # Ancak "Toplam Pazar Büyüklüğü" genelde İl tablosunun en altındaki TOPLAM satırıdır.
-    # Biz verileri_oku fonksiyonunda bunu "tum_veri_turkiye" (Tablo 3.9 Toplam satırı) olarak alıyoruz.
-    
     col_ton = segment + " Ton"
     son_tarih = df_turkiye_resmi['Tarih'].max()
     onceki_ay = son_tarih - relativedelta(months=1)
@@ -141,6 +136,10 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     """
     Tablo 3.7'den (df_turkiye_sirketler) gelen RESMİ veriyi kullanır.
     """
+    # HATA ÖNLEME: Eğer veri çerçevesi boşsa veya sütun yoksa
+    if df_turkiye_sirketler.empty or 'Şirket' not in df_turkiye_sirketler.columns:
+        return [f"⚠️ {odak_sirket} için Türkiye geneli (Tablo 3.7) verisi okunamadı."]
+
     col_ton = segment + " Ton"
     
     # Tablo 3.7 verisinden şirketi süz
@@ -149,8 +148,6 @@ def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
     if df_odak.empty:
         return [f"{odak_sirket} için Tablo 3.7'de (Ulusal Veri) kayıt bulunamadı."]
 
-    # Burada groupby yapmaya gerek yok, zaten her ay için 1 satır olur Tablo 3.7'de.
-    # Ama garanti olsun diye sum alalım.
     toplamlar = df_odak.groupby('Tarih')[col_ton].sum()
     
     son_tarih = df_turkiye_sirketler['Tarih'].max()
@@ -336,8 +333,8 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
 def verileri_oku():
     tum_veri_sirket = []
     tum_veri_iller = []
-    tum_veri_turkiye = [] # Tablo 3.9 Toplamı (Tüm Türkiye Özeti)
-    tum_veri_turkiye_sirket = [] # YENİ: Tablo 3.7 (Şirket Bazlı Ulusal Veri)
+    tum_veri_turkiye = [] 
+    tum_veri_turkiye_sirket = []
     sirket_listesi = set()
     
     files = sorted([f for f in os.listdir(DOSYA_KLASORU) if f.endswith('.docx') or f.endswith('.doc')])
@@ -365,7 +362,6 @@ def verileri_oku():
                     else: son_sehir_sirket = None
 
             elif isinstance(block, Table):
-                # A) İL ÖZET TABLOSU (Tablo 3.9)
                 if "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
                     try:
                         for row in block.rows:
@@ -400,7 +396,6 @@ def verileri_oku():
                             except: continue
                     except: pass
 
-                # YENİ B) TABLO 3.7: LİSANS SAHİPLERİNE GÖRE GENEL TOPLAM
                 elif ("3.7" in son_baslik or ("LİSANS SAHİPLERİNE GÖRE" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper())):
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
@@ -414,7 +409,6 @@ def verileri_oku():
                                 std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
                                 sirket_listesi.add(std_isim)
                                 try:
-                                    # Tablo 3.7 Yapısı (Genelde Tablo 4.7 ile aynıdır sütun olarak)
                                     t_ton = sayi_temizle(cells[1].text)
                                     t_pay = sayi_temizle(cells[2].text)
                                     d_ton = sayi_temizle(cells[3].text)
@@ -432,7 +426,6 @@ def verileri_oku():
                                 except: continue
                     except: pass
 
-                # C) ŞİRKET TABLOLARI (Tablo 4.7 vb - ŞEHİR BAZLI)
                 elif son_sehir_sirket:
                     try:
                         header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
@@ -465,7 +458,12 @@ def verileri_oku():
     df_sirket = pd.DataFrame(tum_veri_sirket)
     df_iller = pd.DataFrame(tum_veri_iller)
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
-    df_turkiye_sirket = pd.DataFrame(tum_veri_turkiye_sirket) # YENİ DF
+    
+    # HATA DÜZELTMESİ: df_turkiye_sirket boşsa bile kolonları olsun
+    if tum_veri_turkiye_sirket:
+        df_turkiye_sirket = pd.DataFrame(tum_veri_turkiye_sirket)
+    else:
+        df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
     
     if not df_sirket.empty:
         df_sirket = df_sirket.sort_values('Tarih')
@@ -587,10 +585,14 @@ else:
                 for l in tr_rapor: st.markdown(l)
                 
                 st.markdown("---")
-                # GÜNCELLENMİŞ FONKSİYON: Artık Tablo 3.7'den gelen gerçek veriyi kullanıyor
-                odak_tr_rapor = sirket_turkiye_analizi(df_turkiye_sirket, secilen_segment, secilen_odak_sirket)
-                if len(odak_tr_rapor) > 1:
-                     for l in odak_tr_rapor: st.markdown(l)
+                
+                # HATA DÜZELTMESİ: Eğer tablo boşsa veya kolon yoksa fonksiyona göndermeden kontrol et
+                if not df_turkiye_sirket.empty and 'Şirket' in df_turkiye_sirket.columns:
+                    odak_tr_rapor = sirket_turkiye_analizi(df_turkiye_sirket, secilen_segment, secilen_odak_sirket)
+                    if len(odak_tr_rapor) > 1:
+                         for l in odak_tr_rapor: st.markdown(l)
+                else:
+                    st.warning("⚠️ Ulusal Şirket Verisi (Tablo 3.7) okunamadı. Dosya formatını kontrol edin.")
             
             st.markdown("---")
             if not df_iller.empty:
