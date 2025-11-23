@@ -134,11 +134,14 @@ def turkiye_pazar_analizi(df_turkiye_resmi, segment):
     return rapor
 
 def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
-    if df_turkiye_sirketler.empty or 'Şirket' not in df_turkiye_sirketler.columns:
+    # Hata Önleme
+    if df_turkiye_sirketler is None or df_turkiye_sirketler.empty:
         return [f"⚠️ {odak_sirket} için Türkiye geneli (Tablo 3.7) verisi okunamadı."]
+    
+    if 'Şirket' not in df_turkiye_sirketler.columns:
+        return [f"⚠️ {odak_sirket} için Türkiye geneli veri yapısı hatalı."]
 
     col_ton = segment + " Ton"
-    
     df_odak = df_turkiye_sirketler[df_turkiye_sirketler['Şirket'] == odak_sirket]
     
     if df_odak.empty:
@@ -342,38 +345,30 @@ def verileri_oku():
         # Word Dosyasındaki TÜM Tabloları Gez
         for table in doc.tables:
             try:
-                # Tablonun ilk birkaç satırını metin olarak al (Başlık kontrolü için)
                 header_text = ""
                 try:
-                    for r in table.rows[:4]: # İlk 4 satıra bak, garanti olsun
+                    for r in table.rows[:4]:
                         for c in r.cells:
                             header_text += c.text.lower()
                 except: continue
                 
-                # --- 1. TABLO 3.7 (LİSANS SAHİPLERİNE GÖRE TÜRKİYE GENELİ) ---
-                # Başlıkta "Lisans" VE "Ürün Türü" geçiyorsa ve satır sayısı mantıklıysa
+                # --- 1. TABLO 3.7 (LİSANS SAHİPLERİNE GÖRE) ---
                 if "lisans" in header_text and ("ürün türü" in header_text or "satış (ton)" in header_text):
                     mevcut_sirket = None
                     for row in table.rows:
                         cells = row.cells
                         if len(cells) < 5: continue
                         
-                        # Şirket Adı (Col 0)
                         ham_sirket = cells[0].text.strip()
-                        # Eğer satırda şirket ismi varsa güncelle
                         if ham_sirket and "LİSANS" not in ham_sirket.upper() and "TOPLAM" not in ham_sirket.upper():
                             mevcut_sirket = ham_sirket
                         
                         if not mevcut_sirket: continue
                         
-                        # Ürün Türü (Col 1)
                         tur = cells[1].text.strip().lower()
                         if "otogaz" in tur or "dökme" in tur or "tüplü" in tur:
                             std_isim = sirket_ismi_standartlastir(mevcut_sirket, sirket_listesi)
                             sirket_listesi.add(std_isim)
-                            
-                            # Satış Verisi (Col 4 - Index 4)
-                            # Genelde sağ taraftaki güncel satış sütunu
                             try:
                                 satis_ton = sayi_temizle(cells[4].text)
                                 t_ton, d_ton, o_ton = 0, 0, 0
@@ -389,14 +384,12 @@ def verileri_oku():
                             except: pass
 
                 # --- 2. TABLO 3.9 (İL ÖZETLERİ) ---
-                # İçinde "il" ve "toplam" geçiyorsa
                 elif "il" in header_text and "toplam" in header_text and ("otogaz" in header_text or "dökme" in header_text):
                     for row in table.rows:
                         cells = row.cells
                         if len(cells) < 6: continue
                         il_adi = cells[0].text.strip()
                         
-                        # Türkiye Toplamı Satırı
                         if "TOPLAM" in il_adi.upper():
                             try:
                                 t_ton = sayi_temizle(cells[1].text)
@@ -410,7 +403,6 @@ def verileri_oku():
                             except: pass
                             continue
                         
-                        # İl Satırları
                         if il_adi == "" or "İL" in il_adi.upper() or len(il_adi) > 30: continue
                         try:
                             il_duzgun = sehir_ismi_duzelt(il_adi)
@@ -427,8 +419,6 @@ def verileri_oku():
             except: pass
 
         # --- 3. ŞEHİR BAZLI ŞİRKET VERİLERİ İÇİN TEKRAR TARAMA ---
-        # Şehir tablolarının başlığı tablonun üstünde olduğu için (Paragraph),
-        # bu yöntem daha güvenilirdir.
         iter_elem = iter_block_items(doc)
         son_sehir_sirket = None
         
@@ -479,7 +469,6 @@ def verileri_oku():
     
     if tum_veri_turkiye_sirket:
         df_ts = pd.DataFrame(tum_veri_turkiye_sirket)
-        # Tüplü, Dökme ve Otogaz ayrı satırlarda geldiği için bunları groupby ile birleştirmeliyiz
         df_turkiye_sirket = df_ts.groupby(['Tarih', 'Şirket'], as_index=False)[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum()
     else:
         df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
@@ -606,7 +595,7 @@ else:
                 for l in tr_rapor: st.markdown(l)
                 
                 st.markdown("---")
-                # HATA KORUMASI: df_turkiye_sirket boş mu kontrolü
+                # HATA KORUMASI
                 if not df_turkiye_sirket.empty and 'Şirket' in df_turkiye_sirket.columns:
                     odak_tr_rapor = sirket_turkiye_analizi(df_turkiye_sirket, secilen_segment, secilen_odak_sirket)
                     if len(odak_tr_rapor) > 1:
@@ -618,7 +607,6 @@ else:
             if not df_iller.empty:
                 p_txt, s_txt, r_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment, secilen_odak_sirket)
                 for l in p_txt: st.markdown(l)
-                
                 c1, c2 = st.columns(2)
                 with c1:
                     for l in s_txt: st.markdown(l)
