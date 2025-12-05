@@ -3,5 +3,6 @@ pandas
 python-docx
 thefuzz
 plotly
-python-dateutil
 yfinance
+python-dateutil
+psutil
