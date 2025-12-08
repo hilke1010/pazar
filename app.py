@@ -53,6 +53,9 @@ BAYRAMLAR = [
     {"Tarih": "2025-03-01", "Isim": "Ramazan B."}, {"Tarih": "2025-06-01", "Isim": "Kurban B."}
 ]
 
+# --- DÜZELTME YAPILAN ALAN ---
+# Buraya eklenen her isim, kodun yanlış tahmin yapmasını engeller.
+# Hürgaz, Akçagaz, Güçgaz vb. eklendi.
 OZEL_DUZELTMELER = {
     "AYTEMİZ": "AYTEMİZ AKARYAKIT DAĞITIM A.Ş.",
     "BALPET": "BALPET PETROL ÜRÜNLERİ TAŞ. SAN. VE TİC. A.Ş.",
@@ -70,13 +73,26 @@ OZEL_DUZELTMELER = {
     "MİNACILAR": "MİNACILAR LPG DEPOLAMA A.Ş.",
     "KADOOĞLU": "KADOOĞLU PETROLCÜLÜK TAŞ. TİC. SAN. İTH. VE İHR. A.Ş.",
     "TERMOPET": "TERMOPET AKARYAKIT A.Ş.",
-    # --- DÜZELTME: ERGAZ İÇİN EKLENDİ ---
+    
+    # --- YENİ EKLENENLER (KARIŞIKLIĞI ÖNLEMEK İÇİN) ---
     "ERGAZ": "ERGAZ SAN. VE TİC. A.Ş.",
     "BLUEPET": "ERGAZ SAN. VE TİC. A.Ş.",
-    # ------------------------------------
+    "HÜRGAZ": "HÜRGAZ TİC. VE SAN. A.Ş.",           # Ergaz ile karışmasın
+    "AKÇAGAZ": "AKÇAGAZ PETROL ÜRÜNLERİ SAN. VE TİC. A.Ş.", # Habaş ile karışmasın
+    "GESAN": "GESAN YATIRIM VE TİCARET A.Ş.",
+    "ORALGAZ": "ORALGAZ SAN. VE TİC. A.Ş.",
+    "GÜÇGAZ": "GÜÇGAZ PETROL ÜRÜNLERİ TİCARET A.Ş.",
+    "GÜVENAL": "GÜVENAL GAZ SAN. VE TİC. A.Ş.",
+    "EFOR": "EFOR AKARYAKIT DAĞITIM SAN. VE TİC. A.Ş.",
+    "AKPET": "AKPET GAZ A.Ş.",
+    "TRABZONGAZ": "TRABZONGAZ LPG SANAYİ NAKLİYAT VE TİCARET A.Ş.",
+    "KALELİ": "KALELİ BEST GAZ İNŞAAT NAKLİYE SAN. VE TİC. LTD. ŞTİ.",
+    "EGAZ": "EGAZ LPG DAĞITIM PETROL SAN. VE TİC. A.Ş.",
+    "SOİL": "SOİL GAZ DAĞITIM PETROL DEPOLAMA PAZARLAMA SAN. VE TİC. A.Ş."
+    # ---------------------------------------------------
 }
 
-# --- RAM TAKİP (YENİ) ---
+# --- RAM TAKİP ---
 def get_total_ram_usage():
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
@@ -114,8 +130,13 @@ def sayi_temizle(text):
 def sirket_ismi_standartlastir(ham_isim, mevcut_isimler):
     ham_isim = ham_isim.strip()
     ham_upper = ham_isim.upper().replace('İ', 'I')
+    
+    # Özel düzeltmelerde tam eşleşme veya alt küme kontrolü
     for k, v in OZEL_DUZELTMELER.items():
-        if k.upper().replace('İ', 'I') in ham_upper: return v
+        # replace('İ', 'I') yaparak karakter sorunlarını aşarız
+        if k.upper().replace('İ', 'I') in ham_upper: 
+            return v
+            
     temiz = re.sub(r'\b(A\.?S\.?|LTD|STI|SAN|TIC)\b', '', ham_upper.replace('.','')).strip()
     if mevcut_isimler:
         match, score = process.extractOne(ham_isim, mevcut_isimler)
@@ -497,9 +518,9 @@ def verileri_oku():
     
     df_sirket = pd.DataFrame(tum_veri_sirket)
     
-    # --- DÜZELTME BAŞLANGICI: Mükerrer Verileri Topla (ERGAZ Sorunu Çözümü) ---
+    # --- DÜZELTME BAŞLANGICI: Mükerrer Verileri Topla ---
     if not df_sirket.empty:
-        # Tarih, Şehir ve Şirket aynı ise (Örn: Bingöl, Eylül 2025, ERGAZ) satırları birleştirip topluyoruz.
+        # Tarih, Şehir ve Şirket aynı ise satırları birleştirip topluyoruz.
         df_sirket = df_sirket.groupby(['Tarih', 'Şehir', 'Şirket'], as_index=False)[
             ['Tüplü Ton', 'Tüplü Pay', 'Dökme Ton', 'Dökme Pay', 'Otogaz Ton', 'Otogaz Pay']
         ].sum()
@@ -589,7 +610,7 @@ else:
             tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "📈 Pazar Grafiği", 
                 "💵 Makro Analiz", 
-                "🥊 Rekabet Analizi",
+                "🥊 Rekabet Analizi", 
                 "🌡️ Mevsimsellik & Tahmin", 
                 "🧠 Stratejik Rapor"
             ])
