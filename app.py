@@ -568,17 +568,6 @@ else:
         
         segmentler = ['Otogaz', 'Tüplü', 'Dökme']
         secilen_segment = st.sidebar.selectbox("Segment", segmentler)
-
-        # --- YENİ EKLENEN LİNKLER VE İLETİŞİM (BAŞLANGIÇ) ---
-        st.sidebar.markdown("---")
-        st.sidebar.header("🔗 Diğer Raporlar")
-        st.sidebar.markdown("⛽ [Akaryakıt Lisans Raporu](https://akartakip.streamlit.app/)")
-        st.sidebar.markdown("🔥 [LPG Lisans Raporu](https://lpgtakip.streamlit.app/)")
-        
-        st.sidebar.markdown("---")
-        st.sidebar.header("📧 İletişim")
-        st.sidebar.info("kerim.aksu@milangaz.com.tr")
-        # --- YENİ EKLENEN LİNKLER VE İLETİŞİM (BİTİŞ) ---
         
         df_sehir_sirket = df_sirket[df_sirket['Şehir'] == secilen_sehir]
         col_pay = secilen_segment + " Pay"
@@ -826,3 +815,4 @@ else:
                             elif "📉" in l or "🟠" in l: st.warning(l)
                             else: st.info(l)
                 else: st.error("İl verileri eksik.")
+
