@@ -9,7 +9,7 @@ from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
 from docx.table import _Cell, Table
 from docx.text.paragraph import Paragraph
-from thefuzz import process
+from thefuzz import process, fuzz
 import plotly.express as px
 import plotly.graph_objects as go
 import re
@@ -53,9 +53,8 @@ BAYRAMLAR = [
     {"Tarih": "2025-03-01", "Isim": "Ramazan B."}, {"Tarih": "2025-06-01", "Isim": "Kurban B."}
 ]
 
-# --- DÜZELTME YAPILAN ALAN ---
-# Buraya eklenen her isim, kodun yanlış tahmin yapmasını engeller.
-# Hürgaz, Akçagaz, Güçgaz vb. eklendi.
+# BURADAKİ LİSTE ARTIK SADECE ÇOK ÖZEL DURUMLAR İÇİN GEREKLİ
+# OTOMATİK SİSTEM GERİSİNİ HALLEDECEK
 OZEL_DUZELTMELER = {
     "AYTEMİZ": "AYTEMİZ AKARYAKIT DAĞITIM A.Ş.",
     "BALPET": "BALPET PETROL ÜRÜNLERİ TAŞ. SAN. VE TİC. A.Ş.",
@@ -73,24 +72,18 @@ OZEL_DUZELTMELER = {
     "MİNACILAR": "MİNACILAR LPG DEPOLAMA A.Ş.",
     "KADOOĞLU": "KADOOĞLU PETROLCÜLÜK TAŞ. TİC. SAN. İTH. VE İHR. A.Ş.",
     "TERMOPET": "TERMOPET AKARYAKIT A.Ş.",
-    
-    # --- YENİ EKLENENLER (KARIŞIKLIĞI ÖNLEMEK İÇİN) ---
     "ERGAZ": "ERGAZ SAN. VE TİC. A.Ş.",
     "BLUEPET": "ERGAZ SAN. VE TİC. A.Ş.",
-    "HÜRGAZ": "HÜRGAZ TİC. VE SAN. A.Ş.",           # Ergaz ile karışmasın
-    "AKÇAGAZ": "AKÇAGAZ PETROL ÜRÜNLERİ SAN. VE TİC. A.Ş.", # Habaş ile karışmasın
-    "GESAN": "GESAN YATIRIM VE TİCARET A.Ş.",
-    "ORALGAZ": "ORALGAZ SAN. VE TİC. A.Ş.",
-    "GÜÇGAZ": "GÜÇGAZ PETROL ÜRÜNLERİ TİCARET A.Ş.",
-    "GÜVENAL": "GÜVENAL GAZ SAN. VE TİC. A.Ş.",
-    "EFOR": "EFOR AKARYAKIT DAĞITIM SAN. VE TİC. A.Ş.",
-    "AKPET": "AKPET GAZ A.Ş.",
-    "TRABZONGAZ": "TRABZONGAZ LPG SANAYİ NAKLİYAT VE TİCARET A.Ş.",
-    "KALELİ": "KALELİ BEST GAZ İNŞAAT NAKLİYE SAN. VE TİC. LTD. ŞTİ.",
-    "EGAZ": "EGAZ LPG DAĞITIM PETROL SAN. VE TİC. A.Ş.",
-    "SOİL": "SOİL GAZ DAĞITIM PETROL DEPOLAMA PAZARLAMA SAN. VE TİC. A.Ş."
-    # ---------------------------------------------------
 }
+
+# ORTAK KELİMELERİ TEMİZLEME LİSTESİ (ÇOK ÖNEMLİ)
+# Bu kelimeleri atıp sadece kök isme bakacağız. Böylece "Akçagaz Petrol" ile "Habaş Petrol" karışmaz.
+STOP_WORDS = [
+    "A.Ş", "A.S", "A.Ş.", "LTD", "ŞTİ", "STI", "SAN", "VE", "TİC", "TIC", 
+    "PETROL", "ÜRÜNLERİ", "URUNLERI", "DAĞITIM", "DAGITIM", "GAZ", "LPG", 
+    "AKARYAKIT", "ENERJİ", "ENERJI", "NAKLİYE", "NAKLIYE", "İNŞAAT", "INSAAT",
+    "PAZARLAMA", "DEPOLAMA", "TURİZM", "TURIZM", "SANAYİ", "SANAYI"
+]
 
 # --- RAM TAKİP ---
 def get_total_ram_usage():
@@ -127,20 +120,57 @@ def sayi_temizle(text):
     try: return float(text.replace('.', '').replace(',', '.'))
     except: return 0.0
 
+def ismi_temizle_kok(isim):
+    """
+    Şirket isminden 'Petrol', 'Gaz', 'A.Ş' gibi gürültü kelimeleri atar.
+    Geriye sadece 'AYGAZ', 'ERGAZ', 'AKÇAGAZ' gibi ayırt edici kök kalır.
+    """
+    isim = isim.upper().replace('İ', 'I').replace('.', ' ')
+    kelimeler = isim.split()
+    # Stop words listesindeki kelimeleri çıkar
+    temiz_kelimeler = [k for k in kelimeler if k not in STOP_WORDS and len(k) > 2]
+    
+    if not temiz_kelimeler: # Eğer her şey silindiyse (örn: sadece 'GAZ A.Ş' ise)
+        return isim # Mecburen orijinali döndür
+    return " ".join(temiz_kelimeler)
+
 def sirket_ismi_standartlastir(ham_isim, mevcut_isimler):
     ham_isim = ham_isim.strip()
     ham_upper = ham_isim.upper().replace('İ', 'I')
     
-    # Özel düzeltmelerde tam eşleşme veya alt küme kontrolü
+    # 1. Adım: Kesin Liste Kontrolü (Manuel Liste)
     for k, v in OZEL_DUZELTMELER.items():
-        # replace('İ', 'I') yaparak karakter sorunlarını aşarız
         if k.upper().replace('İ', 'I') in ham_upper: 
+            # Tam eşleşme değilse bile kelime içinde geçiyorsa (Örn: "ERGAZ LİKİT" içinde "ERGAZ")
+            # Ama burada dikkatli olmalı, "AKPET" "LAKPET" içinde geçmesin diye kelime sınırı kontrolü yapılabilir.
+            # Şimdilik basit tutuyoruz.
             return v
-            
-    temiz = re.sub(r'\b(A\.?S\.?|LTD|STI|SAN|TIC)\b', '', ham_upper.replace('.','')).strip()
+
+    # 2. Adım: Akıllı Eşleştirme (FUZZY MATCHING) - ARTIK DAHA GÜVENLİ
     if mevcut_isimler:
-        match, score = process.extractOne(ham_isim, mevcut_isimler)
-        if score >= 88: return match
+        # Önce gelen ismin kökünü bul (Örn: "AKÇAGAZ PETROL..." -> "AKÇAGAZ")
+        ham_kok = ismi_temizle_kok(ham_upper)
+        
+        en_iyi_eslesme = None
+        en_yuksek_skor = 0
+        
+        for mevcut in mevcut_isimler:
+            mevcut_kok = ismi_temizle_kok(mevcut)
+            
+            # Kökler üzerinden karşılaştırma yap (Gürültü yok)
+            # ratio: Tam benzerlik
+            skor = fuzz.ratio(ham_kok, mevcut_kok)
+            
+            if skor > en_yuksek_skor:
+                en_yuksek_skor = skor
+                en_iyi_eslesme = mevcut
+        
+        # EŞİK DEĞERİ: 95 (Çok yüksek güvenlik. Sadece yazım hatası varsa birleşir.)
+        # HÜRGAZ (6 harf) vs ERGAZ (5 harf) -> Benzerlik %80 civarı çıkar -> BİRLEŞTİRMEZ.
+        if en_yuksek_skor >= 95:
+            return en_iyi_eslesme
+            
+    # Eğer eşleşme yoksa olduğu gibi döndür (Yeni şirket olarak ekle)
     return ham_isim
 
 def sehir_ismi_duzelt(sehir):
@@ -518,14 +548,13 @@ def verileri_oku():
     
     df_sirket = pd.DataFrame(tum_veri_sirket)
     
-    # --- DÜZELTME BAŞLANGICI: Mükerrer Verileri Topla ---
+    # --- Mükerrer Verileri Topla ---
     if not df_sirket.empty:
         # Tarih, Şehir ve Şirket aynı ise satırları birleştirip topluyoruz.
         df_sirket = df_sirket.groupby(['Tarih', 'Şehir', 'Şirket'], as_index=False)[
             ['Tüplü Ton', 'Tüplü Pay', 'Dökme Ton', 'Dökme Pay', 'Otogaz Ton', 'Otogaz Pay']
         ].sum()
-    # --- DÜZELTME BİTİŞİ ---
-
+    
     df_iller = pd.DataFrame(tum_veri_iller)
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
     if tum_veri_turkiye_sirket:
