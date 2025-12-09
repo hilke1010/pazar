@@ -633,7 +633,7 @@ else:
         df_sehir_sirket = df_sirket[df_sirket['Şehir'] == secilen_sehir]
         col_pay = secilen_segment + " Pay"
         
-        if secilen_sehir == "Adana":
+        if secilen_sehir == ["Adana","Bingöl]:
             st.error("⚠️ **SİSTEM UYARISI:** Adana ili için kaynak veri dosyalarında yapısal bozukluklar tespit edilmiştir (EPDK kaynaklı). Yanlış analiz oluşmaması adına Adana ili tüm sekmelerde geçici olarak erişime kapatılmıştır.")
         else:
             tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -869,3 +869,4 @@ else:
                             elif "📉" in l or "🟠" in l: st.warning(l)
                             else: st.info(l)
                 else: st.error("İl verileri eksik.")
+
