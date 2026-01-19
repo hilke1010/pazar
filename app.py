@@ -564,6 +564,94 @@ def verileri_oku():
             
     return df_sirket, df_iller, df_turkiye, df_turkiye_sirket
 
+# --- YENİ FONKSİYON: ÖZEL TABLO ÇEKME ---
+def get_cumulative_tables_raw(file_path):
+    doc = Document(file_path)
+    
+    data_general = []
+    data_distributor = []
+    
+    header_general = False
+    header_dist = False
+    
+    iter_elem = iter_block_items(doc)
+    last_text = ""
+    
+    for block in iter_elem:
+        if isinstance(block, Paragraph):
+            text = block.text.strip()
+            if len(text) > 10:
+                last_text = text
+                if "3.4" in text or ("TÜRÜNE GÖRE" in text.upper() and "KARŞILAŞTIRMA" in text.upper()):
+                    header_general = True
+                    header_dist = False
+                elif "3.6" in text or ("DAĞITICI" in text.upper() and "DAĞILIMI" in text.upper()):
+                    header_dist = True
+                    header_general = False
+                else:
+                    pass
+
+        elif isinstance(block, Table):
+            if header_general:
+                # Tablo 3.4 Çekme
+                try:
+                    for i, row in enumerate(block.rows):
+                        if i < 2: continue # Başlıkları atla
+                        cells = row.cells
+                        if len(cells) < 6: continue
+                        
+                        urun = cells[0].text.strip()
+                        if not urun or "TOPLAM" in urun.upper():
+                            tur = "Genel Toplam"
+                        else:
+                            tur = urun
+                            
+                        # Sütunlar: [0]Türü, [1]2024Ton, [2]2024Pay, [3]2025Ton, [4]2025Pay, [5]Değişim
+                        t24 = sayi_temizle(cells[1].text)
+                        p24 = sayi_temizle(cells[2].text)
+                        t25 = sayi_temizle(cells[3].text)
+                        p25 = sayi_temizle(cells[4].text)
+                        deg = sayi_temizle(cells[5].text)
+                        
+                        data_general.append({
+                            "Ürün Türü": tur,
+                            "Geçen Sene (Ton)": t24,
+                            "Geçen Sene Pay (%)": p24,
+                            "Bu Sene (Ton)": t25,
+                            "Bu Sene Pay (%)": p25,
+                            "Değişim (%)": deg
+                        })
+                except: pass
+                header_general = False # Sadece bir tablo al
+                
+            elif header_dist:
+                # Tablo 3.6 Çekme
+                try:
+                    for i, row in enumerate(block.rows):
+                        if i < 2: continue
+                        cells = row.cells
+                        if len(cells) < 9: continue
+                        
+                        comp = cells[0].text.strip()
+                        if not comp or "TOPLAM" in comp.upper(): continue
+                        
+                        # [0]Comp, [1]TupTon, [2]TupPay, [3]DokTon, [4]DokPay, [5]OtoTon, [6]OtoPay, [7]TopTon, [8]TopPay
+                        data_distributor.append({
+                            "Şirket": comp,
+                            "Tüplü Ton": sayi_temizle(cells[1].text),
+                            "Tüplü Pay (%)": sayi_temizle(cells[2].text),
+                            "Dökme Ton": sayi_temizle(cells[3].text),
+                            "Dökme Pay (%)": sayi_temizle(cells[4].text),
+                            "Otogaz Ton": sayi_temizle(cells[5].text),
+                            "Otogaz Pay (%)": sayi_temizle(cells[6].text),
+                            "Toplam Ton": sayi_temizle(cells[7].text),
+                            "Toplam Pay (%)": sayi_temizle(cells[8].text)
+                        })
+                except: pass
+                header_dist = False
+
+    return pd.DataFrame(data_general), pd.DataFrame(data_distributor)
+
 # --- ARAYÜZ ---
 st.set_page_config(page_title="EPDK Pazar Analizi", layout="wide")
 
@@ -613,7 +701,7 @@ else:
         st.sidebar.markdown("---")
         
         # =================================================================================================
-        # 1. SENARYO: AYLIK ANALİZ
+        # 1. SENARYO: AYLIK ANALİZ (ESKİ KODLARIN AYNISI)
         # =================================================================================================
         if sayfa_secimi == "Aylık Analiz (Şehir Bazlı)":
             st.sidebar.header("⚙️ Parametreler")
@@ -900,187 +988,74 @@ else:
                     else: st.error("İl verileri eksik.")
 
         # =================================================================================================
-        # 2. SENARYO: KÜMÜLATİF RAPOR (GÜNCELLENMİŞ VERSİYON)
+        # 2. SENARYO: KÜMÜLATİF RAPOR (DOĞRUDAN DOCX OKUMA)
         # =================================================================================================
         else:
-            if df_turkiye.empty or df_turkiye_sirket.empty:
-                st.error("Kümülatif rapor için yeterli Türkiye verisi bulunamadı.")
+            if df_turkiye.empty:
+                st.error("Rapor dosyası bulunamadı.")
             else:
                 st.sidebar.markdown("### Kümülatif Filtreler")
                 secilen_segment_cum = st.sidebar.selectbox("Segment Seçiniz", ["Tüm Ürünler (Detaylı Tablo)", "Otogaz", "Tüplü", "Dökme"])
                 
-                # --- OTOMATİK TARİH TESPİTİ ---
-                max_date = df_turkiye['Tarih'].max()
-                current_year = max_date.year
-                prev_year = current_year - 1
-                end_month_num = max_date.month
-                end_month_name = TR_AYLAR[end_month_num]
+                # En Güncel Dosyayı Bul
+                last_date = df_turkiye['Tarih'].max()
+                files = sorted([f for f in os.listdir(DOSYA_KLASORU) if f.endswith('.docx') or f.endswith('.doc')])
+                target_file = None
+                for f in files:
+                    d = dosya_isminden_tarih(f)
+                    if d == last_date:
+                        target_file = f
+                        break
+                
+                if target_file:
+                    file_path = os.path.join(DOSYA_KLASORU, target_file)
+                    st.info(f"📄 Veriler **{target_file}** dosyasındaki Tablo 3.4 ve Tablo 3.6'dan doğrudan çekilmektedir.")
+                    
+                    df_gen, df_dist = get_cumulative_tables_raw(file_path)
+                    
+                    if not df_gen.empty:
+                        st.subheader(f"1. Ürün Türüne Göre Karşılaştırma (Genel Pazar)")
+                        st.dataframe(df_gen.style.format({
+                            col: "{:,.2f}" for col in df_gen.columns if "Ton" in col or "Pay" in col or "Değişim" in col
+                        }).map(highlight_val, subset=['Değişim (%)']), use_container_width=True)
+                    else:
+                        st.warning("Tablo 3.4 (Genel Karşılaştırma) bulunamadı.")
+                        
+                    st.markdown("---")
+                    
+                    if not df_dist.empty:
+                        st.subheader(f"2. Dağıtıcı Bazlı Pazar Payları ({secilen_segment_cum})")
+                        
+                        # FİLTRELEME MANTIĞI
+                        if secilen_segment_cum == "Tüm Ürünler (Detaylı Tablo)":
+                            cols = ['Şirket', 'Tüplü Ton', 'Tüplü Pay (%)', 'Dökme Ton', 'Dökme Pay (%)', 'Otogaz Ton', 'Otogaz Pay (%)', 'Toplam Ton', 'Toplam Pay (%)']
+                            final_df = df_dist[cols]
+                            # Standartlaştırma
+                            final_df['Şirket'] = final_df['Şirket'].apply(lambda x: sirket_ismi_standartlastir(x, []))
+                            final_df = final_df.sort_values('Toplam Pay (%)', ascending=False).reset_index(drop=True)
+                            final_df.index += 1
+                            
+                            st.dataframe(final_df.style.format({
+                                col: "{:,.2f}" for col in final_df.columns if col != "Şirket"
+                            }), use_container_width=True)
+                            
+                        else:
+                            # Tekil Segment Seçimi (Sadece O ürünü göster)
+                            col_ton = f"{secilen_segment_cum} Ton"
+                            col_pay = f"{secilen_segment_cum} Pay (%)"
+                            
+                            cols = ['Şirket', col_ton, col_pay]
+                            final_df = df_dist[cols]
+                            final_df['Şirket'] = final_df['Şirket'].apply(lambda x: sirket_ismi_standartlastir(x, []))
+                            final_df = final_df.sort_values(col_pay, ascending=False).reset_index(drop=True)
+                            final_df.index += 1
+                            
+                            st.dataframe(final_df.style.format({
+                                col_ton: "{:,.2f}",
+                                col_pay: "{:.2f}"
+                            }), use_container_width=True)
 
-                # Dönem Tarihleri
-                d1_curr = pd.Timestamp(current_year, 1, 1)
-                d2_curr = pd.Timestamp(current_year, end_month_num, 1)
-                d1_prev = pd.Timestamp(prev_year, 1, 1)
-                d2_prev = pd.Timestamp(prev_year, end_month_num, 1)
-                
-                # --- VERİ SAĞLIĞI KONTROLÜ ---
-                df_curr = df_turkiye[(df_turkiye['Tarih'] >= d1_curr) & (df_turkiye['Tarih'] <= d2_curr)]
-                df_prev = df_turkiye[(df_turkiye['Tarih'] >= d1_prev) & (df_turkiye['Tarih'] <= d2_prev)]
-                
-                count_curr = df_curr['Tarih'].nunique()
-                count_prev = df_prev['Tarih'].nunique()
-                
-                if count_curr != count_prev:
-                    st.warning(f"⚠️ **Veri Uyumsuzluğu:** {current_year} yılı için **{count_curr}** aylık veri bulundu, ancak {prev_year} yılı için sadece **{count_prev}** aylık veri bulundu. Bu durum büyüme oranlarını yapay olarak yüksek gösterebilir. Lütfen `raporlar` klasöründe {prev_year} yılına ait eksik dosyaları kontrol ediniz.")
+                    else:
+                        st.warning("Tablo 3.6 (Dağıtıcı Bazlı) bulunamadı.")
                 else:
-                    st.success(f"✅ Veri Sağlığı: Her iki yıl için de **{count_curr}** aylık veri eksiksiz işlendi.")
-                # ------------------------------------------------
-                
-                st.header(f"📈 Kümülatif Rapor: Ocak - {end_month_name} {current_year}")
-                st.markdown("---")
-
-                # --- BÖLÜM 1: GENEL PAZAR BÜYÜKLÜKLERİ (TABLO 1 - TABLO 3.4 BENZERİ) ---
-                st.subheader(f"1. Ürün Türüne Göre LPG Satışlarının Ocak-{end_month_name} Dönemi Karşılaştırması")
-                
-                def calculate_totals(df):
-                    res = {
-                        'TÜPLÜ': df['Tüplü Ton'].sum(),
-                        'DÖKME': df['Dökme Ton'].sum(),
-                        'OTOGAZ': df['Otogaz Ton'].sum()
-                    }
-                    res['Genel Toplam'] = sum(res.values())
-                    return res
-
-                totals_curr = calculate_totals(df_curr)
-                totals_prev = calculate_totals(df_prev)
-                
-                summary_data = []
-                for k in ['TÜPLÜ', 'DÖKME', 'OTOGAZ', 'Genel Toplam']:
-                    t_curr = totals_curr[k]
-                    t_prev = totals_prev[k]
-                    
-                    # Pay hesabı: İlgili yılın Genel Toplamına bölünür
-                    pay_curr = (t_curr / totals_curr['Genel Toplam'] * 100) if totals_curr['Genel Toplam'] > 0 else 0
-                    pay_prev = (t_prev / totals_prev['Genel Toplam'] * 100) if totals_prev['Genel Toplam'] > 0 else 0
-                    
-                    degisim = ((t_curr - t_prev) / t_prev * 100) if t_prev > 0 else 0
-                    
-                    summary_data.append({
-                        'Ürün Türü': k,
-                        f'Ocak-{end_month_name} {prev_year} Satış (Ton)': t_prev,
-                        f'Pay {prev_year} (%)': pay_prev,
-                        f'Ocak-{end_month_name} {current_year} Satış (Ton)': t_curr,
-                        f'Pay {current_year} (%)': pay_curr,
-                        'Değişim (%)': degisim
-                    })
-                
-                df_summary = pd.DataFrame(summary_data)
-                
-                format_dict = {
-                    f'Ocak-{end_month_name} {prev_year} Satış (Ton)': "{:,.2f}",
-                    f'Pay {prev_year} (%)': "{:.2f}",
-                    f'Ocak-{end_month_name} {current_year} Satış (Ton)': "{:,.2f}",
-                    f'Pay {current_year} (%)': "{:.2f}",
-                    'Değişim (%)': "{:+.2f}"
-                }
-                st.dataframe(df_summary.style.format(format_dict).map(highlight_val, subset=['Değişim (%)']), use_container_width=True)
-
-                st.markdown("---")
-                
-                # --- BÖLÜM 2: SEÇİLEN SEGMENTE GÖRE DAĞITICI SIRALAMASI ---
-                st.subheader(f"2. Ocak-{end_month_name} {current_year} Dönemi Dağıtıcı Bazlı Pazar Payları")
-                
-                # Şirket Verilerini Filtrele
-                df_s_curr = df_turkiye_sirket[(df_turkiye_sirket['Tarih'] >= d1_curr) & (df_turkiye_sirket['Tarih'] <= d2_curr)]
-                
-                # Şirket bazında grupla
-                grp_curr = df_s_curr.groupby('Şirket')[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum().reset_index()
-                grp_curr['Toplam Ton'] = grp_curr['Tüplü Ton'] + grp_curr['Dökme Ton'] + grp_curr['Otogaz Ton']
-                
-                # -------------------------------------------------------------
-                # SEÇENEK A: TÜM ÜRÜNLER (TABLO 3.6 GİBİ GENİŞ GÖRÜNÜM)
-                # -------------------------------------------------------------
-                if secilen_segment_cum == "Tüm Ürünler (Detaylı Tablo)":
-                    # Pazar Toplamları
-                    market_tuplu = grp_curr['Tüplü Ton'].sum()
-                    market_dokme = grp_curr['Dökme Ton'].sum()
-                    market_otogaz = grp_curr['Otogaz Ton'].sum()
-                    market_total = grp_curr['Toplam Ton'].sum()
-                    
-                    # Pay Hesapları (Ürün bazında pazar payı)
-                    grp_curr['Tüplü Pay (%)'] = (grp_curr['Tüplü Ton'] / market_tuplu * 100).fillna(0)
-                    grp_curr['Dökme Pay (%)'] = (grp_curr['Dökme Ton'] / market_dokme * 100).fillna(0)
-                    grp_curr['Otogaz Pay (%)'] = (grp_curr['Otogaz Ton'] / market_otogaz * 100).fillna(0)
-                    grp_curr['Toplam Pay (%)'] = (grp_curr['Toplam Ton'] / market_total * 100).fillna(0)
-                    
-                    # Sıralama
-                    grp_curr = grp_curr.sort_values('Toplam Pay (%)', ascending=False).reset_index(drop=True)
-                    grp_curr.index += 1
-                    
-                    cols_display = [
-                        'Şirket',
-                        'Tüplü Ton', 'Tüplü Pay (%)',
-                        'Dökme Ton', 'Dökme Pay (%)',
-                        'Otogaz Ton', 'Otogaz Pay (%)',
-                        'Toplam Ton', 'Toplam Pay (%)'
-                    ]
-                    
-                    df_display_wide = grp_curr[cols_display]
-                    
-                    format_dict_wide = {col: "{:,.2f}" if "Ton" in col else "{:.2f}" for col in df_display_wide.columns if col != 'Şirket'}
-                    st.dataframe(df_display_wide.style.format(format_dict_wide), use_container_width=True)
-
-                # -------------------------------------------------------------
-                # SEÇENEK B: TEK SEGMENT (KIYASLAMALI DETAY)
-                # -------------------------------------------------------------
-                else:
-                    if secilen_segment_cum == "Otogaz":
-                        col_ton = 'Otogaz Ton'
-                    elif secilen_segment_cum == "Tüplü":
-                        col_ton = 'Tüplü Ton'
-                    elif secilen_segment_cum == "Dökme":
-                        col_ton = 'Dökme Ton'
-                    
-                    # Geçen Sene Verisi (Sadece kıyaslama için gerekli)
-                    df_s_prev = df_turkiye_sirket[(df_turkiye_sirket['Tarih'] >= d1_prev) & (df_turkiye_sirket['Tarih'] <= d2_prev)]
-                    grp_prev = df_s_prev.groupby('Şirket')[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum().reset_index()
-
-                    # Pazar Toplamları
-                    market_total_curr = grp_curr[col_ton].sum()
-                    market_total_prev = grp_prev[col_ton].sum()
-
-                    # Birleştirme
-                    df_merged = pd.merge(grp_curr[['Şirket', col_ton]], grp_prev[['Şirket', col_ton]], 
-                                         on='Şirket', how='outer', suffixes=('_curr', '_prev')).fillna(0)
-
-                    col_curr = f"{secilen_segment_cum} Ton ({current_year})"
-                    col_prev = f"{secilen_segment_cum} Ton ({prev_year})"
-                    col_pay_curr = f"Pay {current_year} (%)"
-                    col_pay_prev = f"Pay {prev_year} (%)"
-                    col_diff_ton = "Fark (Ton)"
-                    col_diff_pay = "Fark (Pay)"
-
-                    df_merged[col_curr] = df_merged[f'{col_ton}_curr']
-                    df_merged[col_prev] = df_merged[f'{col_ton}_prev']
-
-                    df_merged[col_pay_curr] = (df_merged[col_curr] / market_total_curr * 100) if market_total_curr > 0 else 0
-                    df_merged[col_pay_prev] = (df_merged[col_prev] / market_total_prev * 100) if market_total_prev > 0 else 0
-                    
-                    df_merged[col_diff_ton] = df_merged[col_curr] - df_merged[col_prev]
-                    df_merged[col_diff_pay] = df_merged[col_pay_curr] - df_merged[col_pay_prev]
-
-                    df_merged = df_merged.sort_values(col_curr, ascending=False).reset_index(drop=True)
-                    df_merged.index += 1
-
-                    final_cols = ['Şirket', col_curr, col_pay_curr, col_prev, col_pay_prev, col_diff_ton, col_diff_pay]
-                    df_display_2 = df_merged[final_cols]
-
-                    format_dict_2 = {
-                        col_curr: "{:,.2f}",
-                        col_prev: "{:,.2f}",
-                        col_pay_curr: "{:.2f}",
-                        col_pay_prev: "{:.2f}",
-                        col_diff_ton: "{:+,.2f}",
-                        col_diff_pay: "{:+.2f}"
-                    }
-
-                    st.dataframe(df_display_2.style.format(format_dict_2).map(highlight_val, subset=[col_diff_ton, col_diff_pay]), use_container_width=True)
+                    st.error("En güncel tarihli dosya fiziksel olarak bulunamadı.")
