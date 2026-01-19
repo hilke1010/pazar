@@ -4,11 +4,12 @@ import os
 import gc
 import psutil
 from docx import Document
+from docx.document import Document as _Document
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
 from docx.table import _Cell, Table
 from docx.text.paragraph import Paragraph
-from thefuzz import fuzz
+from thefuzz import process, fuzz
 import plotly.express as px
 import plotly.graph_objects as go
 import re
@@ -567,67 +568,64 @@ def extract_table_by_content_final(doc, table_type):
     table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay - Tek Yıl)
     """
     for table in doc.tables:
-        # Tablonun ilk 3 satırındaki tüm metinleri alıp başlık analizi yapalım
-        text_signature = ""
+        # Tablo içeriğini düz metin olarak alıp anahtar kelime arayalım
+        table_content_str = ""
         try:
-            # İlk 3 satırdaki metinleri alalım (Başlıklar genelde buradadır)
-            rows_to_check = table.rows[:3] if len(table.rows) > 3 else table.rows
-            for row in rows_to_check:
+            # İlk 5 satır genellikle başlık ve ilk verileri içerir, yeterli olur
+            for row in table.rows[:5]:
                 for cell in row.cells:
-                    text_signature += cell.text.upper().strip() + " "
+                    table_content_str += cell.text.upper() + " "
         except: continue
 
         # --- TİP 1: GENEL KARŞILAŞTIRMA (Tablo 3.4) ---
-        # İmza: "ÜRÜN TÜRÜ" ve "DEĞİŞİM" kelimeleri mutlaka geçer
+        # Bu tablonun İMZASI: İçinde "TÜPLÜ", "DÖKME" ve "OTOGAZ" kelimelerinin hepsi geçer.
+        # Ayrıca sütun sayısı genelde azdır (6-7 sütun).
         if table_type == 1:
-            if "ÜRÜN TÜRÜ" in text_signature and "DEĞİŞİM" in text_signature:
-                data = []
-                for i, row in enumerate(table.rows):
-                    cells = row.cells
-                    # Genelde 6 sütun olur
-                    if len(cells) < 6: continue
+            if "TÜPLÜ" in table_content_str and "DÖKME" in table_content_str and "OTOGAZ" in table_content_str:
+                # Ancak Tablo 3.6 da bu kelimeleri içerir. Fark şudur:
+                # Tablo 3.4'te "LİSANS" veya "UNVAN" kelimesi GEÇMEZ.
+                if "LİSANS" not in table_content_str and "UNVAN" not in table_content_str:
+                    data = []
+                    for i, row in enumerate(table.rows):
+                        cells = row.cells
+                        # Tablo 3.4 genelde 6 sütunludur (Ürün, 2024Ton, 2024Pay, 2025Ton, 2025Pay, Değişim)
+                        if len(cells) < 5: continue
+                        
+                        first_cell = cells[0].text.strip()
+                        # Başlık satırını atla ("ÜRÜN TÜRÜ" vs)
+                        if "ÜRÜN" in first_cell.upper() or "TÜRÜ" in first_cell.upper(): continue
+                        
+                        # Satır verisi al (TÜPLÜ, DÖKME, OTOGAZ, GENEL TOPLAM)
+                        if any(x in first_cell.upper() for x in ["TÜPLÜ", "DÖKME", "OTOGAZ", "TOPLAM"]):
+                            tur = "Genel Toplam" if "TOPLAM" in first_cell.upper() else first_cell
+                            try:
+                                # Sütun indeksleri kayabilir, sağdan sola gidelim garanti olsun
+                                # Son sütun = Değişim, Ondan önceki = Pay 2025, Ondan önceki = Ton 2025...
+                                vals = [sayi_temizle(c.text) for c in cells[1:]] # İlk hücre hariç sayıları al
+                                if len(vals) >= 5:
+                                    data.append({
+                                        "Ürün Türü": tur,
+                                        "Geçen Sene (Ton)": vals[0],
+                                        "Geçen Sene Pay (%)": vals[1],
+                                        "Bu Sene (Ton)": vals[2],
+                                        "Bu Sene Pay (%)": vals[3],
+                                        "Değişim (%)": vals[4]
+                                    })
+                            except: continue
                     
-                    first_cell = cells[0].text.strip()
-                    # Başlık satırını atla
-                    if "ÜRÜN TÜRÜ" in first_cell.upper(): continue
-                    if not first_cell: continue
-                    
-                    tur = "Genel Toplam" if "TOPLAM" in first_cell.upper() else first_cell
-                    
-                    try:
-                        data.append({
-                            "Ürün Türü": tur,
-                            "Geçen Sene (Ton)": sayi_temizle(cells[1].text),
-                            "Geçen Sene Pay (%)": sayi_temizle(cells[2].text),
-                            "Bu Sene (Ton)": sayi_temizle(cells[3].text),
-                            "Bu Sene Pay (%)": sayi_temizle(cells[4].text),
-                            "Değişim (%)": sayi_temizle(cells[5].text)
-                        })
-                    except: continue
-                
-                if len(data) > 0: return pd.DataFrame(data)
+                    if len(data) > 0: return pd.DataFrame(data)
 
         # --- TİP 2: DAĞITICI BAZLI DETAY (Tablo 3.6) ---
-        # İmza: "LİSANS" ve "OTOGAZ" ve "TÜPLÜ" kelimeleri geçer
+        # Bu tablonun İMZASI: "AYGAZ" kelimesi (Pazar lideri, her tabloda olur).
         elif table_type == 2:
-            if "LİSANS" in text_signature and "OTOGAZ" in text_signature:
-                # AYGAZ kontrolü de ekleyelim ki kesinleşsin
-                if "AYGAZ" not in text_signature: # Aygaz yoksa satırlara bak
-                    has_aygaz = False
-                    for r in table.rows:
-                        if "AYGAZ" in r.cells[0].text.upper():
-                            has_aygaz = True
-                            break
-                    if not has_aygaz: continue
-
+            if "AYGAZ" in table_content_str:
                 data = []
                 for i, row in enumerate(table.rows):
                     cells = row.cells
-                    # Genelde 9 sütun olur
                     if len(cells) < 9: continue
                     
                     comp = cells[0].text.strip()
-                    # Başlık satırlarını ve boşları atla
+                    # Başlıkları atla
                     if "LİSANS" in comp.upper() or "UNVANI" in comp.upper(): continue
                     if not comp or "TOPLAM" in comp.upper(): continue
                     
@@ -647,8 +645,7 @@ def extract_table_by_content_final(doc, table_type):
                         })
                     except: continue
                 
-                if len(data) > 3: # En az 3 veri varsa doğrudur
-                    return pd.DataFrame(data)
+                if len(data) > 0: return pd.DataFrame(data)
             
     return pd.DataFrame()
 
@@ -946,7 +943,6 @@ else:
                                 forecast_data.append({
                                     'Tarih': format_tarih_tr(next_date),
                                     'Pazar Tahmin (Ton)': forecast_val,
-                                    'Likitgaz Tahmin (Ton)': forecast_val,
                                     'Likitgaz Tahmin (Ton)': likit_forecast
                                 })
                                 
@@ -1015,6 +1011,7 @@ else:
                 file_prev = None
                 
                 # Dosyaları eşleştir (Örn: Kasim25.docx ve Kasim24.docx)
+                # Basit replace yerine tarih kontrolü yapıyoruz
                 for f in files:
                     d = dosya_isminden_tarih(f)
                     if d == max_date:
