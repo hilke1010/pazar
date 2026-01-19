@@ -561,41 +561,40 @@ def verileri_oku():
             
     return df_sirket, df_iller, df_turkiye, df_turkiye_sirket
 
-# --- YENİ FONKSİYON: "İÇERİK BAZLI" AKILLI TABLO TARAMA ---
+# --- GÜNCELLENMİŞ TABLO TARAMA ---
 def extract_table_by_content_final(doc, table_type):
     """
     table_type 1: Tablo 3.4 (Genel Karşılaştırma - 2024 vs 2025)
-    table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay - Tek Yıl)
+    table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay)
     """
     for table in doc.tables:
-        # Tablonun ilk 3 satırındaki tüm metinleri alıp başlık analizi yapalım
         text_signature = ""
         try:
-            # İlk 3 satırdaki metinleri alalım (Başlıklar genelde buradadır)
-            rows_to_check = table.rows[:3] if len(table.rows) > 3 else table.rows
+            # İlk satırlardaki başlıkları kontrol et
+            rows_to_check = table.rows[:4] if len(table.rows) > 4 else table.rows
             for row in rows_to_check:
                 for cell in row.cells:
                     text_signature += cell.text.upper().strip() + " "
         except: continue
 
         # --- TİP 1: GENEL KARŞILAŞTIRMA (Tablo 3.4) ---
-        # ÖNEMLİ DÜZELTME: Bu tablonun imzası "DEĞİŞİM" kelimesidir. Aylık tabloda "DEĞİŞİM" yoktur.
-        # Ayrıca "ÜRÜN TÜRÜ" sütunu vardır.
+        # Bu tabloda "ÜRÜN TÜRÜ", "SATIŞ", "PAY" ve "DEĞİŞİM" kelimeleri olur.
         if table_type == 1:
             if "ÜRÜN TÜRÜ" in text_signature and "DEĞİŞİM" in text_signature:
                 data = []
-                for i, row in enumerate(table.rows):
+                for row in table.rows:
                     cells = row.cells
                     if len(cells) < 6: continue
                     
                     first_cell = cells[0].text.strip()
-                    # Başlık satırını atla
-                    if "ÜRÜN" in first_cell.upper() or "TÜRÜ" in first_cell.upper(): continue
+                    # Başlık satırlarını atla, sadece veri satırlarını al
+                    if "ÜRÜN" in first_cell.upper() or "SATIŞ" in first_cell.upper(): continue
                     if not first_cell: continue
                     
                     tur = "Genel Toplam" if "TOPLAM" in first_cell.upper() else first_cell
                     
-                    # Bu tabloyu işleme al (Doğru tablo bulundu)
+                    # Tablo 3.4 Yapısı (Resme göre):
+                    # [0] Tür, [1] GeçenYılTon, [2] GeçenYılPay, [3] BuYılTon, [4] BuYılPay, [5] Değişim
                     try:
                         data.append({
                             "Ürün Türü": tur,
@@ -610,31 +609,26 @@ def extract_table_by_content_final(doc, table_type):
                 if len(data) > 0: return pd.DataFrame(data)
 
         # --- TİP 2: DAĞITICI BAZLI DETAY (Tablo 3.6) ---
-        # İMZA: "LİSANS" ve "OTOGAZ" ve "TÜPLÜ" ve "AYGAZ".
-        # Aylık tabloda da AYGAZ olabilir ama sütun sayısı farklıdır veya başlıkta "OCAK-KASIM" yazar.
+        # Bu tabloda "LİSANS" ve şirket isimleri (AYGAZ vb.) olur.
         elif table_type == 2:
-            if "LİSANS" in text_signature and "OTOGAZ" in text_signature:
-                # AYGAZ kontrolü (Pazar lideri listede olmalı)
+            if "LİSANS" in text_signature and ("OTOGAZ" in text_signature or "TÜPLÜ" in text_signature):
+                # AYGAZ kontrolü (Tablonun doğru tablo olduğundan emin olmak için)
                 has_aygaz = False
-                if "AYGAZ" in text_signature:
-                    has_aygaz = True
+                if "AYGAZ" in text_signature: has_aygaz = True
                 else:
-                    for r in table.rows[:10]: # İlk 10 satıra bak
+                    for r in table.rows[:15]: 
                         if len(r.cells) > 0 and "AYGAZ" in r.cells[0].text.upper():
                             has_aygaz = True
                             break
                 
                 if not has_aygaz: continue
 
-                # Sütun sayısı kontrolü: Tablo 3.6 genelde 9 sütunludur (Ad + 4x2 veri)
-                # Ancak bazen hücre birleşimi olabilir. En az 7 sütun bekleyelim.
-                first_row_cells = len(table.rows[0].cells)
-                if first_row_cells < 7: continue
-
                 data = []
-                for i, row in enumerate(table.rows):
+                # Tablo 3.6 Yapısı (Resme göre):
+                # [0] Şirket, [1] TüplüTon, [2] TüplüPay, [3] DökmeTon, [4] DökmePay, [5] OtogazTon, [6] OtogazPay, [7] ToplamTon, [8] ToplamPay
+                for row in table.rows:
                     cells = row.cells
-                    # Veri satırlarında 9 hücre olmalı
+                    # En az 9 hücre olmalı
                     if len(cells) < 9: continue
                     
                     comp = cells[0].text.strip()
@@ -657,8 +651,7 @@ def extract_table_by_content_final(doc, table_type):
                         })
                     except: continue
                 
-                if len(data) > 3: # En az 3 şirket verisi varsa dön
-                    return pd.DataFrame(data)
+                if len(data) > 3: return pd.DataFrame(data)
             
     return pd.DataFrame()
 
@@ -1024,7 +1017,6 @@ else:
                 file_prev = None
                 
                 # Dosyaları eşleştir (Örn: Kasim25.docx ve Kasim24.docx)
-                # Basit replace yerine tarih kontrolü yapıyoruz
                 for f in files:
                     d = dosya_isminden_tarih(f)
                     if d == max_date:
@@ -1046,7 +1038,7 @@ else:
                     # Bu tablo zaten güncel dosyanın içinde hazır var (2024 vs 2025)
                     st.subheader(f"1. Ürün Türüne Göre LPG Satışlarının Ocak-{ay_ismi} Dönemi Karşılaştırması")
                     
-                    # Buradaki Type 1 = Tablo 3.4
+                    # Type 1 = Tablo 3.4 (Genel)
                     df_gen = extract_table_by_content_final(doc_curr, 1) 
                     
                     if not df_gen.empty:
