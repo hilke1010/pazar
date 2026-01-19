@@ -32,7 +32,7 @@ OTHER_COLORS = px.colors.qualitative.Set2
 TR_AYLAR = {1: 'Ocak', 2: 'Şubat', 3: 'Mart', 4: 'Nisan', 5: 'Mayıs', 6: 'Haziran', 7: 'Temmuz', 8: 'Ağustos', 9: 'Eylül', 10: 'Ekim', 11: 'Kasım', 12: 'Aralık'}
 TR_AYLAR_KISA = {1: 'Oca', 2: 'Şub', 3: 'Mar', 4: 'Nis', 5: 'May', 6: 'Haz', 7: 'Tem', 8: 'Ağu', 9: 'Eyl', 10: 'Eki', 11: 'Kas', 12: 'Ara'}
 DOSYA_AY_MAP = {'ocak': 1, 'subat': 2, 'mart': 3, 'nisan': 4, 'mayis': 5, 'haziran': 6, 'temmuz': 7, 'agustos': 8, 'eylul': 9, 'ekim': 10, 'kasim': 11, 'aralik': 12}
-BAYRAMLAR = [{"Tarih": f"{y}-{m:02d}-01", "Isim": n} for y in range(2022, 2026) for m, n in [(4, "Ramazan B."), (6, "Kurban B.")]] # Basitleştirilmiş bayram
+BAYRAMLAR = [{"Tarih": f"{y}-{m:02d}-01", "Isim": n} for y in range(2022, 2026) for m, n in [(4, "Ramazan B."), (6, "Kurban B.")]]
 
 # ÖZEL DÜZELTMELER
 OZEL_DUZELTMELER = {
@@ -134,38 +134,20 @@ def grafik_bayram_ekle(fig, df_dates):
             fig.add_annotation(x=b_date, y=1, yref="paper", text=bayram["Isim"], showarrow=False, textangle=-90, yanchor="top")
     return fig
 
-# --- ANALİZ MOTORLARI ---
-def turkiye_pazar_analizi(df_turkiye_resmi, segment):
-    # Eğer Toptan seçildiyse bu analiz farklı çalışmalı veya pas geçilmeli
-    if segment == "Toptan":
-        return ["### 🔄 TOPTAN PAZAR ANALİZİ", "Veriler Dağıtıcılar Arası Ticaret tablolarından çekilmektedir."]
-        
-    col_ton = segment + " Ton"
-    if col_ton not in df_turkiye_resmi.columns: return []
-    
-    son_tarih = df_turkiye_resmi['Tarih'].max()
-    try: ton_simdi = df_turkiye_resmi[df_turkiye_resmi['Tarih'] == son_tarih][col_ton].values[0]
-    except: ton_simdi = 0
-    return [f"### 🇹🇷 TÜRKİYE GENELİ - {segment.upper()} PAZAR RAPORU ({format_tarih_tr(son_tarih)})",
-            f"Toplam **{ton_simdi:,.0f} ton** satış gerçekleşti."]
-
-def sirket_turkiye_analizi(df_turkiye_sirketler, segment, odak_sirket):
-    col_ton = segment + " Ton"
-    if col_ton not in df_turkiye_sirketler.columns: return []
-    df_odak = df_turkiye_sirketler[df_turkiye_sirketler['Şirket'] == odak_sirket]
-    if df_odak.empty: return []
-    
-    son_tarih = df_turkiye_sirketler['Tarih'].max()
-    ton_simdi = df_odak[df_odak['Tarih'] == son_tarih][col_ton].sum()
-    
-    return [f"### 🏢 {odak_sirket} RAPORU",
-            f"{odak_sirket}, bu dönemde **{ton_simdi:,.0f} ton** {segment} satışı gerçekleştirdi."]
-
 # --- VERİ OKUMA ---
 @st.cache_data
 def verileri_oku():
-    tum_veri_sirket, tum_veri_iller, tum_veri_turkiye, tum_veri_turkiye_sirket = [], [], [], []
-    tum_toptan_aylik, tum_toptan_donem, tum_genel_satis = [], [], []
+    tum_veri_sirket, tum_veri_iller = [], []
+    
+    # 3.1 ve 3.2 İçin (Toptan)
+    tum_toptan_aylik, tum_toptan_kumulatif = [], []
+    
+    # 3.5 ve 3.6 İçin (Genel Satış - Türkiye)
+    tum_genel_aylik, tum_genel_kumulatif = [], []
+    
+    # 3.7 İçin (Karşılaştırma)
+    tum_karsilastirma = []
+    
     sirket_listesi = set()
     files = sorted([f for f in os.listdir(DOSYA_KLASORU) if f.endswith('.docx') or f.endswith('.doc')])
     
@@ -185,64 +167,129 @@ def verileri_oku():
                         parts = text.split(":")
                         if len(parts)>1 and 2<len(parts[1].strip())<40: son_sehir_sirket = parts[1].strip()
                     else: son_sehir_sirket = None
+            
             elif isinstance(block, Table):
-                # TOPTAN (3.1 ve 3.2)
+                # -------------------------------------------------------------
+                # 1. TOPTAN SATIŞLAR (Tablo 3.1 ve 3.2)
+                # -------------------------------------------------------------
                 if "DAĞITICILAR ARASI" in son_baslik.upper():
-                    target = tum_toptan_donem if ("OCAK" in son_baslik.upper() or "DÖNEMLERİ" in son_baslik.upper()) else tum_toptan_aylik
-                    for row in block.rows:
-                        if len(row.cells) < 9: continue
-                        isim = row.cells[0].text.strip()
-                        if not isim or "TOPLAM" in isim.upper() or "SATIŞ" in isim.upper(): continue
-                        std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
-                        sirket_listesi.add(std_isim)
-                        target.append({
-                            'Tarih': tarih, 'Şirket': std_isim,
-                            'Tüplü Ton': sayi_temizle(row.cells[1].text),
-                            'Dökme Ton': sayi_temizle(row.cells[3].text),
-                            'Otogaz Ton': sayi_temizle(row.cells[5].text),
-                            'Toplam Ton': sayi_temizle(row.cells[7].text)
-                        })
-                
-                # GENEL SATIŞ (3.5/3.6) - Türkiye Geneli kırılımı için
-                elif "ÜRÜN TÜRÜNE GÖRE DAĞILIMI" in son_baslik.upper():
-                    for row in block.rows:
-                        if len(row.cells) < 9: continue
-                        isim = row.cells[0].text.strip()
-                        if not isim or "TOPLAM" in isim.upper(): continue
-                        std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
-                        sirket_listesi.add(std_isim)
-                        tum_genel_satis.append({
-                            'Tarih': tarih, 'Şirket': std_isim,
-                            'Tüplü Ton': sayi_temizle(row.cells[1].text),
-                            'Dökme Ton': sayi_temizle(row.cells[3].text),
-                            'Otogaz Ton': sayi_temizle(row.cells[5].text),
-                            'Toplam Ton': sayi_temizle(row.cells[7].text)
-                        })
+                    # Başlıkta "OCAK" veya "DÖNEMLERİ" geçiyorsa Kümülatiftir
+                    is_cumulative = ("OCAK" in son_baslik.upper() or "DÖNEMLERİ" in son_baslik.upper())
+                    target_list = tum_toptan_kumulatif if is_cumulative else tum_toptan_aylik
+                    
+                    try:
+                        for row in block.rows:
+                            if len(row.cells) < 9: continue
+                            isim = row.cells[0].text.strip()
+                            if not isim or "TOPLAM" in isim.upper() or "SATIŞ YAPAN" in isim.upper(): continue
+                            
+                            std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
+                            sirket_listesi.add(std_isim)
+                            
+                            target_list.append({
+                                'Tarih': tarih,
+                                'Şirket': std_isim,
+                                'Tüplü Ton': sayi_temizle(row.cells[1].text),
+                                'Tüplü Pay': sayi_temizle(row.cells[2].text),
+                                'Dökme Ton': sayi_temizle(row.cells[3].text),
+                                'Dökme Pay': sayi_temizle(row.cells[4].text),
+                                'Otogaz Ton': sayi_temizle(row.cells[5].text),
+                                'Otogaz Pay': sayi_temizle(row.cells[6].text),
+                                'Toplam Ton': sayi_temizle(row.cells[7].text),
+                                'Toplam Pay': sayi_temizle(row.cells[8].text)
+                            })
+                    except: pass
 
-                # İLLER (Tablo 4.x)
+                # -------------------------------------------------------------
+                # 2. GENEL SATIŞLAR (Tablo 3.5 ve 3.6)
+                # -------------------------------------------------------------
+                elif "ÜRÜN TÜRÜNE GÖRE DAĞILIMI" in son_baslik.upper():
+                    is_cumulative = ("OCAK" in son_baslik.upper() or "DÖNEMLERİ" in son_baslik.upper())
+                    target_list = tum_genel_kumulatif if is_cumulative else tum_genel_aylik
+                    
+                    try:
+                        for row in block.rows:
+                            if len(row.cells) < 9: continue
+                            isim = row.cells[0].text.strip()
+                            if not isim or "TOPLAM" in isim.upper() or "LİSANS" in isim.upper(): continue
+                            
+                            std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
+                            sirket_listesi.add(std_isim)
+                            
+                            target_list.append({
+                                'Tarih': tarih,
+                                'Şirket': std_isim,
+                                'Tüplü Ton': sayi_temizle(row.cells[1].text),
+                                'Tüplü Pay': sayi_temizle(row.cells[2].text),
+                                'Dökme Ton': sayi_temizle(row.cells[3].text),
+                                'Dökme Pay': sayi_temizle(row.cells[4].text),
+                                'Otogaz Ton': sayi_temizle(row.cells[5].text),
+                                'Otogaz Pay': sayi_temizle(row.cells[6].text),
+                                'Toplam Ton': sayi_temizle(row.cells[7].text),
+                                'Toplam Pay': sayi_temizle(row.cells[8].text)
+                            })
+                    except: pass
+
+                # -------------------------------------------------------------
+                # 3. KARŞILAŞTIRMA (Tablo 3.7) - Şirket Bazlı
+                # -------------------------------------------------------------
+                elif "3.7" in son_baslik or ("LİSANS" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper()):
+                    try:
+                        # Bu tablo yapısı biraz karışık (Merged Cells olabilir). 
+                        # Genelde: Şirket | Ürün | Tarih1 Ton | Tarih1 Pay | Tarih2 Ton | Tarih2 Pay | Değişim
+                        mevcut_sirket_37 = None
+                        for row in block.rows:
+                            cells = row.cells
+                            if len(cells) < 6: continue
+                            
+                            # İlk hücrede şirket adı varsa al, yoksa önceki satırdan devam (merged cell mantığı)
+                            raw_sirket = cells[0].text.strip()
+                            if raw_sirket and "LİSANS" not in raw_sirket.upper():
+                                mevcut_sirket_37 = sirket_ismi_standartlastir(raw_sirket, sirket_listesi)
+                                sirket_listesi.add(mevcut_sirket_37)
+                            
+                            if not mevcut_sirket_37: continue
+                            
+                            urun = cells[1].text.strip().title() # Dökme, Otogaz vs.
+                            if urun in ["Dökme", "Otogaz", "Tüplü", "Firma Toplamı"]:
+                                # Değerler genellikle sondan başa doğru sabittir
+                                # Değişim(%), Cari Yıl Pay(%), Cari Yıl Ton, Geçen Yıl Pay(%), Geçen Yıl Ton
+                                # Tablo yapısına göre indexleri ayarlıyoruz (Resim 3'e göre)
+                                # Resim: Şirket | Ürün | Ton 2024 | Pay 2024 | Ton 2025 | Pay 2025 | Değişim
+                                try:
+                                    ton_once = sayi_temizle(cells[2].text)
+                                    pay_once = sayi_temizle(cells[3].text)
+                                    ton_cari = sayi_temizle(cells[4].text)
+                                    pay_cari = sayi_temizle(cells[5].text)
+                                    degisim = sayi_temizle(cells[6].text)
+                                    
+                                    tum_karsilastirma.append({
+                                        'Tarih': tarih,
+                                        'Şirket': mevcut_sirket_37,
+                                        'Ürün': urun,
+                                        'Önceki Ton': ton_once,
+                                        'Önceki Pay': pay_once,
+                                        'Cari Ton': ton_cari,
+                                        'Cari Pay': pay_cari,
+                                        'Değişim %': degisim
+                                    })
+                                except: pass
+                    except: pass
+
+                # -------------------------------------------------------------
+                # 4. İL BAZLI VERİLER (Tablo 4.x)
+                # -------------------------------------------------------------
                 elif "İLLERE" in son_baslik.upper() and "DAĞILIMI" in son_baslik.upper():
                     for row in block.rows:
                         if len(row.cells) < 6: continue
                         il = row.cells[0].text.strip()
-                        if "TOPLAM" in il.upper():
-                            tum_veri_turkiye.append({'Tarih': tarih, 'Tüplü Ton': sayi_temizle(row.cells[1].text), 'Dökme Ton': sayi_temizle(row.cells[3].text), 'Otogaz Ton': sayi_temizle(row.cells[5].text)})
-                        elif "İL" not in il.upper() and il != "":
+                        if "İL" not in il.upper() and il != "" and "TOPLAM" not in il.upper():
                             t, d, o = sayi_temizle(row.cells[1].text), sayi_temizle(row.cells[3].text), sayi_temizle(row.cells[5].text)
                             if t+d+o > 0: tum_veri_iller.append({'Tarih': tarih, 'Şehir': sehir_ismi_duzelt(il), 'Tüplü Ton': t, 'Dökme Ton': d, 'Otogaz Ton': o})
                 
-                # ULUSAL PAZAR PAYLARI (3.7)
-                elif "3.7" in son_baslik or ("LİSANS" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper()):
-                    for row in block.rows:
-                        if len(row.cells) < 5: continue
-                        isim = row.cells[0].text.strip()
-                        if not isim or "LİSANS" in isim.upper(): continue
-                        tur = row.cells[1].text.strip().lower()
-                        std_isim = sirket_ismi_standartlastir(isim, sirket_listesi)
-                        sirket_listesi.add(std_isim)
-                        val = sayi_temizle(row.cells[4].text)
-                        tum_veri_turkiye_sirket.append({'Tarih': tarih, 'Şirket': std_isim, 'Tüplü Ton': val if "tüplü" in tur else 0, 'Dökme Ton': val if "dökme" in tur else 0, 'Otogaz Ton': val if "otogaz" in tur else 0})
-
-                # ŞEHİR BAZLI ŞİRKETLER
+                # -------------------------------------------------------------
+                # 5. ŞEHİR DETAYLARI
+                # -------------------------------------------------------------
                 elif son_sehir_sirket:
                     header = "".join([c.text.lower() for row in block.rows[:2] for c in row.cells])
                     if any(x in header for x in ["tüplü", "dökme", "pay"]):
@@ -261,28 +308,36 @@ def verileri_oku():
 
     gc.collect()
     
-    # DataFrame Dönüşümleri ve Gruplamalar
+    # DATAFRAME OLUŞTURMA
     def create_df(data, group_cols):
         if not data: return pd.DataFrame()
         df = pd.DataFrame(data)
-        return df.groupby(group_cols, as_index=False).sum()
+        # Eğer duplicate varsa (örn: aynı şirketin aynı ayda iki satırı) topla
+        return df.groupby(group_cols, as_index=False).sum(numeric_only=True)
 
+    # İL VE ŞİRKET DETAYLARI
     df_sirket = create_df(tum_veri_sirket, ['Tarih', 'Şehir', 'Şirket'])
-    df_iller = pd.DataFrame(tum_veri_iller) # İller toplanmaz, zaten tek satır
-    df_turkiye = pd.DataFrame(tum_veri_turkiye)
-    df_turkiye_sirket = create_df(tum_veri_turkiye_sirket, ['Tarih', 'Şirket'])
+    df_iller = pd.DataFrame(tum_veri_iller) # İller toplanmaz
+    
+    # TOPTAN (3.1 & 3.2)
     df_toptan_aylik = create_df(tum_toptan_aylik, ['Tarih', 'Şirket'])
-    df_toptan_donem = create_df(tum_toptan_donem, ['Tarih', 'Şirket'])
-    df_genel_satis = create_df(tum_genel_satis, ['Tarih', 'Şirket'])
+    df_toptan_kumulatif = create_df(tum_toptan_kumulatif, ['Tarih', 'Şirket'])
+    
+    # GENEL (3.5 & 3.6)
+    df_genel_aylik = create_df(tum_genel_aylik, ['Tarih', 'Şirket'])
+    df_genel_kumulatif = create_df(tum_genel_kumulatif, ['Tarih', 'Şirket'])
+    
+    # KARŞILAŞTIRMA (3.7) - Toplama yapılmaz, olduğu gibi alınır
+    df_karsilastirma = pd.DataFrame(tum_karsilastirma)
 
     # Tarih formatlama
-    for df in [df_sirket, df_iller, df_turkiye, df_turkiye_sirket, df_toptan_aylik, df_toptan_donem, df_genel_satis]:
+    for df in [df_sirket, df_iller, df_toptan_aylik, df_toptan_kumulatif, df_genel_aylik, df_genel_kumulatif, df_karsilastirma]:
         if not df.empty:
             df.sort_values('Tarih', inplace=True)
             df['Dönem'] = df['Tarih'].apply(format_tarih_tr)
             df['Tarih_Grafik'] = df['Tarih'].apply(format_tarih_grafik)
 
-    return df_sirket, df_iller, df_turkiye, df_turkiye_sirket, df_toptan_aylik, df_toptan_donem, df_genel_satis
+    return df_sirket, df_iller, df_toptan_aylik, df_toptan_kumulatif, df_genel_aylik, df_genel_kumulatif, df_karsilastirma
 
 # --- ARAYÜZ ---
 st.set_page_config(page_title="EPDK Pazar Analizi", layout="wide")
@@ -291,6 +346,7 @@ if 'analiz_basladi' not in st.session_state:
     st.session_state['analiz_basladi'] = False
     gc.collect()
 
+# --- GİRİŞ EKRANI ---
 if not st.session_state['analiz_basladi']:
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
@@ -301,192 +357,202 @@ if not st.session_state['analiz_basladi']:
             st.rerun()
     st.stop()
 
+# --- ANALİZ EKRANI ---
 with st.spinner('Veriler yükleniyor...'):
-    df_sirket, df_iller, df_turkiye, df_turkiye_sirket, df_toptan_aylik, df_toptan_donem, df_genel_satis = verileri_oku()
+    df_sirket, df_iller, df_toptan_aylik, df_toptan_kumulatif, df_genel_aylik, df_genel_kumulatif, df_karsilastirma = verileri_oku()
 
 st.title("📊 EPDK Stratejik Pazar Analizi")
 
-if df_sirket.empty and df_toptan_aylik.empty:
-    st.warning("Görüntülenecek veri bulunamadı.")
+if df_sirket.empty and df_genel_aylik.empty:
+    st.warning("Veri bulunamadı.")
 else:
-    # --- SIDEBAR AYARLARI ---
+    # --- SIDEBAR ---
     st.sidebar.header("⚙️ Parametreler")
     
-    # ŞEHİR LİSTESİ (TÜRKİYE GENELİ EKLENDİ)
+    # 1. ŞEHİR SEÇİMİ
     sehir_listesi = ["TÜRKİYE GENELİ"] + sorted(df_sirket['Şehir'].unique()) if not df_sirket.empty else ["TÜRKİYE GENELİ"]
     secilen_sehir = st.sidebar.selectbox("Bölge / Şehir", sehir_listesi)
     
-    # SEGMENT LİSTESİ (TOPTAN EKLENDİ)
-    segmentler = ['Otogaz', 'Tüplü', 'Dökme', 'Toptan']
-    secilen_segment = st.sidebar.selectbox("Segment", segmentler)
+    # 2. SEGMENT SEÇİMİ (Grafikler için)
+    segmentler = ['Otogaz', 'Tüplü', 'Dökme']
+    secilen_segment = st.sidebar.selectbox("Segment (Grafik İçin)", segmentler)
     
-    # DÖNEM SEÇİMİ (NOKTA İŞARETİ / RADIO)
-    gorunum_turu = st.sidebar.radio("Veri Dönemi:", ["Aylık", "Kümülatif (Ocak - Güncel)"])
+    # 3. DÖNEM TİPİ
+    donem_tipi = st.sidebar.radio("Dönem Tipi:", ["Aylık", "Kümülatif"])
 
-    # --- VERİ FİLTRELEME VE HAZIRLIK ---
-    # 1. Hangi ana veri setini kullanacağız?
-    df_ana = pd.DataFrame()
-    col_ton = ""
-    col_pay = ""
-    
-    # A) TOPTAN SEÇİLDİYSE (Şehir farketmeksizin ulusal veri gelir)
-    if secilen_segment == "Toptan":
-        if "Kümülatif" in gorunum_turu:
-            df_ana = df_toptan_donem.copy()
+    # --- TABLAR ---
+    tab_genel, tab_toptan, tab_karsilastirma, tab_grafik = st.tabs([
+        "🇹🇷 Genel Pazar", 
+        "🔄 Toptan Satış", 
+        "📊 Yıllık Karşılaştırma",
+        "📈 Grafikler"
+    ])
+
+    # ------------------------------------------
+    # TAB 1: GENEL PAZAR (Tablo 3.5 & 3.6 & 4.x)
+    # ------------------------------------------
+    with tab_genel:
+        st.subheader(f"🇹🇷 {secilen_sehir} - Pazar Durumu ({donem_tipi})")
+        
+        # Veri Kaynağını Belirle
+        df_view = pd.DataFrame()
+        
+        if secilen_sehir == "TÜRKİYE GENELİ":
+            # Türkiye geneli için Tablo 3.5 (Aylık) veya 3.6 (Kümülatif)
+            df_view = df_genel_kumulatif if donem_tipi == "Kümülatif" else df_genel_aylik
         else:
-            df_ana = df_toptan_aylik.copy()
-        
-        # Toptan için "Toplam Ton" varsayılır ama Pazar Payı hesaplanmalı
-        col_ton = "Toplam Ton"
-        col_pay = "Toptan Pay"
-        if not df_ana.empty:
-            # Pay hesapla: (Şirket Ton / O tarihteki Toplam Ton) * 100
-            toplamlar = df_ana.groupby('Tarih')[col_ton].transform('sum')
-            df_ana[col_pay] = (df_ana[col_ton] / toplamlar) * 100
+            # Şehir bazlı ise df_sirket kullanılır
+            # Şehir verileri genelde aylıktır. Kümülatif istenirse hesaplanır.
+            df_city = df_sirket[df_sirket['Şehir'] == secilen_sehir].copy()
+            if donem_tipi == "Kümülatif" and not df_city.empty:
+                df_city['Yıl'] = df_city['Tarih'].dt.year
+                cols = ['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']
+                df_city[cols] = df_city.groupby(['Yıl', 'Şirket'])[cols].cumsum()
+                # Payları yeniden hesapla (Basit yaklaşım: o anki toplama böl)
+                # Not: Şehir kümülatif payı için o şehrin toplamına ihtiyaç var.
+                # Şimdilik Tonaj odaklı gidelim.
+                df_view = df_city
+            else:
+                df_view = df_city
 
-    # B) TÜRKİYE GENELİ SEÇİLDİYSE (Toptan değilse)
-    elif secilen_sehir == "TÜRKİYE GENELİ":
-        # Veri kaynağı Tablo 3.7 (df_turkiye_sirket) veya Tablo 3.5 (df_genel_satis)
-        # Tablo 3.5 daha kapsamlı olduğu için onu tercih edelim, yoksa 3.7
-        if not df_genel_satis.empty:
-            df_ana = df_genel_satis.copy()
-        else:
-            df_ana = df_turkiye_sirket.copy()
+        if not df_view.empty:
+            son_tarih = df_view['Tarih'].max()
+            df_son = df_view[df_view['Tarih'] == son_tarih].copy()
             
-        col_ton = secilen_segment + " Ton"
-        col_pay = secilen_segment + " Pay"
-        
-        # Kümülatif isteniyorsa veriyi topla (Ocak'tan itibaren)
-        if "Kümülatif" in gorunum_turu and not df_ana.empty:
-            df_ana['Yıl'] = df_ana['Tarih'].dt.year
-            df_ana = df_ana.groupby(['Yıl', 'Şirket'])[col_ton].cumsum().reset_index(name=col_ton)
-            # Tarih bilgisini geri getirmek lazım (son ay tarihi olarak)
-            # Bu biraz karmaşık, basitlik adına Türkiye Geneli Kümülatif'te Aylık Toplam gösterelim veya 
-            # Kullanıcıya not düşelim. Şimdilik aylık kalsın ama payı hesaplayalım.
-            # DÜZELTME: Kümülatif hesaplama karmaşık olduğu için, mevcut veriyi kullanıp pay hesaplayacağız.
-        
-        if not df_ana.empty and col_ton in df_ana.columns:
-            toplamlar = df_ana.groupby('Tarih')[col_ton].transform('sum')
-            df_ana[col_pay] = (df_ana[col_ton] / toplamlar) * 100
-
-    # C) BELİRLİ BİR ŞEHİR SEÇİLDİYSE
-    else:
-        df_ana = df_sirket[df_sirket['Şehir'] == secilen_sehir].copy()
-        col_ton = secilen_segment + " Ton"
-        col_pay = secilen_segment + " Pay"
-        
-        # Kümülatif Simülasyonu (Şehir verileri genelde aylıktır, biz toplarız)
-        if "Kümülatif" in gorunum_turu and not df_ana.empty:
-            df_ana = df_ana.sort_values('Tarih')
-            df_ana['Yıl'] = df_ana['Tarih'].dt.year
-            # Kümülatif Toplam (Grup bazında)
-            df_ana[col_ton] = df_ana.groupby(['Yıl', 'Şirket'])[col_ton].cumsum()
-            # Payı yeniden hesapla
-            toplamlar = df_ana.groupby('Tarih')[col_ton].transform('sum')
-            df_ana[col_pay] = (df_ana[col_ton] / toplamlar) * 100
-
-    # --- TABLAR VE GÖRSELLEŞTİRME ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Pazar Grafiği", "💵 Makro Analiz", "🥊 Rekabet Analizi", "🌡️ Mevsimsellik & Tahmin", "🧠 Stratejik Rapor"])
-    
-    if df_ana.empty:
-        st.info("Bu seçim için veri bulunamadı.")
-    else:
-        # Grafik için veri hazırlığı
-        mevcut_sirketler = sorted(df_ana['Şirket'].unique())
-        
-        with tab1:
-            col_f1, col_f2 = st.columns(2)
-            session_key = f"secim_{secilen_sehir}_{secilen_segment}"
-            if session_key not in st.session_state:
-                varsayilan = [LIKITGAZ_NAME] if LIKITGAZ_NAME in mevcut_sirketler else (mevcut_sirketler[:3] if len(mevcut_sirketler)>3 else mevcut_sirketler)
-                st.session_state[session_key] = varsayilan
+            # Tablo 3.5 formatı: Toplam Ton'a göre sırala
+            if 'Toplam Ton' not in df_son.columns:
+                df_son['Toplam Ton'] = df_son['Tüplü Ton'] + df_son['Dökme Ton'] + df_son['Otogaz Ton']
             
-            with col_f1:
-                secilen_sirketler = st.multiselect("Şirketler", mevcut_sirketler, default=st.session_state[session_key], key="w_"+session_key)
-            st.session_state[session_key] = secilen_sirketler
-            
-            with col_f2:
-                # Eğer Toptan ise "Pazar Payı" seçeneği anlamlı olmayabilir ama hesapladık.
-                veri_tipi = st.radio("Gösterim:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
-                y_col = col_pay if "Pazar" in veri_tipi else col_ton
-
-            if secilen_sirketler:
-                df_chart = df_ana[df_ana['Şirket'].isin(secilen_sirketler)]
-                
-                title_prefix = f"{secilen_sehir} - {secilen_segment}"
-                if "Kümülatif" in gorunum_turu: title_prefix += " (Kümülatif)"
-                
-                color_map = {s: OTHER_COLORS[i%len(OTHER_COLORS)] for i,s in enumerate(secilen_sirketler)}
-                if LIKITGAZ_NAME in color_map: color_map[LIKITGAZ_NAME] = LIKITGAZ_COLOR
-                
-                fig = px.line(df_chart, x='Tarih', y=y_col, color='Şirket', markers=True, 
-                              color_discrete_map=color_map, title=f"{title_prefix} Trendi")
-                fig = grafik_bayram_ekle(fig, df_chart['Tarih'])
-                st.plotly_chart(fig, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader(f"📋 Sıralama ({secilen_sehir} - {secilen_segment})")
-            
-            # Son dönem tablosu
-            son_tarih = df_ana['Tarih'].max()
-            df_son = df_ana[df_ana['Tarih'] == son_tarih].sort_values(col_pay, ascending=False).reset_index(drop=True)
+            df_son = df_son.sort_values('Toplam Ton', ascending=False).reset_index(drop=True)
             df_son.index += 1
             
-            cols_show = ['Şirket', col_ton, col_pay]
-            st.dataframe(df_son[cols_show].style.format({col_ton: "{:,.2f}", col_pay: "{:.2f}%"}), use_container_width=True)
+            # GÖSTERİLECEK KOLONLAR
+            cols_to_show = ['Şirket', 'Tüplü Ton', 'Tüplü Pay', 'Dökme Ton', 'Dökme Pay', 'Otogaz Ton', 'Otogaz Pay', 'Toplam Ton', 'Toplam Pay']
+            # Şehir verisinde 'Toplam' olmayabilir, kontrol et
+            available_cols = [c for c in cols_to_show if c in df_son.columns]
+            
+            st.markdown(f"**Dönem:** {format_tarih_tr(son_tarih)}")
+            
+            # Formatlama
+            format_dict = {c: "{:,.2f}" for c in available_cols if "Ton" in c}
+            format_dict.update({c: "{:.2f}%" for c in available_cols if "Pay" in c})
+            
+            st.dataframe(df_son[available_cols].style.format(format_dict), use_container_width=True, height=600)
+        else:
+            st.warning("Bu kriterlere uygun genel pazar verisi bulunamadı.")
 
-        with tab2: # Makro
-             if secilen_segment == "Toptan":
-                 st.info("Toptan segmenti için Dolar analizi yerine toplam hacim analizi görüntüleniyor.")
-                 fig_toptan = px.bar(df_ana, x='Tarih', y=col_ton, color='Şirket', title="Toptan Hacim Dağılımı")
-                 st.plotly_chart(fig_toptan, use_container_width=True)
-             else:
-                 df_toplam = df_ana.groupby('Tarih')[col_ton].sum().reset_index()
-                 if not df_toplam.empty:
-                    df_dolar = dolar_verisi_getir(df_toplam['Tarih'].min())
-                    if not df_dolar.empty:
-                        df_makro = pd.merge(df_toplam, df_dolar, on='Tarih', how='inner')
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(x=df_makro['Tarih'], y=df_makro[col_ton], name='Pazar (Ton)', opacity=0.6))
-                        fig.add_trace(go.Scatter(x=df_makro['Tarih'], y=df_makro['Dolar Kuru'], name='Dolar', yaxis='y2', line=dict(color='red')))
-                        fig.update_layout(yaxis2=dict(overlaying='y', side='right'), title="Pazar Hacmi vs Dolar")
-                        st.plotly_chart(fig, use_container_width=True)
-
-        with tab3: # Rekabet
-            # Sadece son ayın verisiyle HHI ve Rekabet
-            if not df_son.empty:
-                hhi = (df_son[col_pay] ** 2).sum()
-                st.metric("Pazar Rekabet Endeksi (HHI)", f"{hhi:,.0f}")
-                if hhi < 1500: st.success("Rekabetçi Pazar (Hakimiyet Düşük)")
-                elif hhi < 2500: st.warning("Oligopol Pazar (Birkaç Büyük Firma Hakim)")
-                else: st.error("Tekelleşmiş Pazar (Yüksek Hakimiyet)")
-                
-                fig_bar = px.bar(df_son.head(10), x=col_pay, y='Şirket', orientation='h', title="Top 10 Pazar Payı", color=col_pay)
-                st.plotly_chart(fig_bar, use_container_width=True)
-
-        with tab4: # Tahmin
-             # Sadece aylık veri varsa tahmin mantıklı olur
-             if "Kümülatif" not in gorunum_turu:
-                 df_toplam = df_ana.groupby('Tarih')[col_ton].sum().reset_index()
-                 if len(df_toplam) > 6:
-                     fig_trend = px.scatter(df_toplam, x='Tarih', y=col_ton, trendline="ols", title="Pazar Trend Eğilimi")
-                     st.plotly_chart(fig_trend, use_container_width=True)
-                 else:
-                     st.info("Tahmin için yeterli veri yok.")
-             else:
-                 st.info("Kümülatif veride mevsimsellik analizi yapılmaz. Lütfen 'Aylık' görünümü seçin.")
+    # ------------------------------------------
+    # TAB 2: TOPTAN SATIŞ (Tablo 3.1 & 3.2)
+    # ------------------------------------------
+    with tab_toptan:
+        st.subheader(f"🔄 Dağıtıcılar Arası Toptan LPG Satışları ({donem_tipi})")
+        st.caption("Bu veriler Tablo 3.1 (Aylık) ve Tablo 3.2 (Kümülatif) kaynaklıdır.")
         
-        with tab5: # Stratejik Rapor
-            st.markdown(f"### 📝 {secilen_sehir} - {secilen_segment} Raporu")
-            toplam_hacim = df_son[col_ton].sum()
-            st.write(f"Son dönem ({format_tarih_tr(son_tarih)}) toplam pazar hacmi: **{toplam_hacim:,.2f} ton**.")
+        # Veri seçimi
+        df_top = df_toptan_kumulatif if donem_tipi == "Kümülatif" else df_toptan_aylik
+        
+        if not df_top.empty:
+            son_tarih_toptan = df_top['Tarih'].max()
+            df_son_top = df_top[df_top['Tarih'] == son_tarih_toptan].sort_values('Toplam Ton', ascending=False).reset_index(drop=True)
+            df_son_top.index += 1
             
-            lider = df_son.iloc[0]
-            st.write(f"Pazar Lideri: **{lider['Şirket']}** (Pay: %{lider[col_pay]:.2f})")
+            st.markdown(f"**Dönem:** {format_tarih_tr(son_tarih_toptan)}")
             
-            if LIKITGAZ_NAME in df_son['Şirket'].values:
-                biz = df_son[df_son['Şirket'] == LIKITGAZ_NAME].iloc[0]
-                rank = df_son[df_son['Şirket'] == LIKITGAZ_NAME].index[0]
-                st.info(f"📍 **{LIKITGAZ_NAME}** Konumu: **{rank}. Sıra** | Pay: **%{biz[col_pay]:.2f}** | Satış: **{biz[col_ton]:,.2f} ton**")
-            else:
-                st.warning(f"{LIKITGAZ_NAME} bu dönemde satış kaydı bulunamadı.")
+            # Toptan Tablosu (Resimdeki format)
+            cols_top = ['Şirket', 'Tüplü Ton', 'Tüplü Pay', 'Dökme Ton', 'Dökme Pay', 'Otogaz Ton', 'Otogaz Pay', 'Toplam Ton', 'Toplam Pay']
+            
+            format_dict_top = {c: "{:,.2f}" for c in cols_top if "Ton" in c}
+            format_dict_top.update({c: "{:.2f}%" for c in cols_top if "Pay" in c})
+            
+            st.dataframe(df_son_top[cols_top].style.format(format_dict_top), use_container_width=True, height=600)
+            
+            # Görselleştirme (Ekstra)
+            st.markdown("---")
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                fig_top = px.bar(df_son_top.head(10), x='Şirket', y='Toplam Ton', title="Top 10 Toptan Satıcı (Ton)", color='Toplam Ton')
+                st.plotly_chart(fig_top, use_container_width=True)
+            with col_g2:
+                fig_pie = px.pie(df_son_top.head(5), values='Toplam Ton', names='Şirket', title="Pazar Payı Dağılımı (Top 5)")
+                st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.warning("Toptan satış verisi bulunamadı.")
+
+    # ------------------------------------------
+    # TAB 3: KARŞILAŞTIRMA (Tablo 3.7)
+    # ------------------------------------------
+    with tab_karsilastirma:
+        st.subheader("📊 Dönemler Arası Karşılaştırma (Tablo 3.7)")
+        
+        if not df_karsilastirma.empty:
+            # Tarih Seçimi
+            tarihler = df_karsilastirma['Dönem'].unique()
+            secilen_donem_kar = st.selectbox("Karşılaştırma Dönemi Seç:", tarihler)
+            
+            df_kar_view = df_karsilastirma[df_karsilastirma['Dönem'] == secilen_donem_kar].copy()
+            
+            # Şirket Filtresi
+            sirketler_kar = ["TÜMÜ"] + sorted(df_kar_view['Şirket'].unique())
+            filtre_sirket = st.selectbox("Şirket Filtrele:", sirketler_kar)
+            
+            if filtre_sirket != "TÜMÜ":
+                df_kar_view = df_kar_view[df_kar_view['Şirket'] == filtre_sirket]
+            
+            # Tablo Gösterimi
+            cols_kar = ['Şirket', 'Ürün', 'Önceki Ton', 'Önceki Pay', 'Cari Ton', 'Cari Pay', 'Değişim %']
+            
+            format_dict_kar = {
+                'Önceki Ton': "{:,.2f}", 'Cari Ton': "{:,.2f}",
+                'Önceki Pay': "{:.2f}%", 'Cari Pay': "{:.2f}%",
+                'Değişim %': "{:.2f}%"
+            }
+            
+            # Renkli Değişim Sütunu
+            def color_change(val):
+                color = 'green' if val > 0 else 'red' if val < 0 else 'black'
+                return f'color: {color}'
+
+            st.dataframe(df_kar_view[cols_kar].style.format(format_dict_kar).applymap(color_change, subset=['Değişim %']), use_container_width=True, height=600)
+        else:
+            st.warning("Karşılaştırma tablosu (Tablo 3.7) verisi okunamadı.")
+
+    # ------------------------------------------
+    # TAB 4: GRAFİKLER (Mevcut yapı)
+    # ------------------------------------------
+    with tab_grafik:
+        col_ton = secilen_segment + " Ton"
+        col_pay = secilen_segment + " Pay"
+        
+        # Veri Hazırlığı
+        if secilen_sehir == "TÜRKİYE GENELİ":
+            df_chart_base = df_genel_kumulatif if donem_tipi == "Kümülatif" else df_genel_aylik
+        else:
+            df_chart_base = df_sirket[df_sirket['Şehir'] == secilen_sehir]
+            # Kümülatif grafik için basit toplama (Eğer seçilirse)
+            if donem_tipi == "Kümülatif" and not df_chart_base.empty:
+                df_chart_base = df_chart_base.sort_values('Tarih')
+                df_chart_base['Yıl'] = df_chart_base['Tarih'].dt.year
+                df_chart_base[col_ton] = df_chart_base.groupby(['Yıl', 'Şirket'])[col_ton].cumsum()
+
+        if not df_chart_base.empty:
+            mevcut_sirketler = sorted(df_chart_base['Şirket'].unique())
+            st.markdown(f"### {secilen_sehir} - {secilen_segment} Trendi ({donem_tipi})")
+            
+            secilen_sirketler_gr = st.multiselect("Grafikte Gösterilecek Şirketler:", mevcut_sirketler, default=[LIKITGAZ_NAME] if LIKITGAZ_NAME in mevcut_sirketler else mevcut_sirketler[:3])
+            
+            if secilen_sirketler_gr:
+                df_plot = df_chart_base[df_chart_base['Şirket'].isin(secilen_sirketler_gr)]
+                
+                # Renk haritası
+                color_map = {s: OTHER_COLORS[i%len(OTHER_COLORS)] for i,s in enumerate(secilen_sirketler_gr)}
+                if LIKITGAZ_NAME in color_map: color_map[LIKITGAZ_NAME] = LIKITGAZ_COLOR
+                
+                # Grafik Tipi
+                y_ekseni = st.radio("Eksen:", ["Satış (Ton)", "Pazar Payı (%)"], horizontal=True)
+                y_col = col_ton if "Ton" in y_ekseni else col_pay
+                
+                fig = px.line(df_plot, x='Tarih', y=y_col, color='Şirket', markers=True, color_discrete_map=color_map)
+                fig = grafik_bayram_ekle(fig, df_plot['Tarih'])
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Grafik için veri yok.")
