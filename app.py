@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import re
 from dateutil.relativedelta import relativedelta
 import datetime
-import numpy as np # Hesaplamalar için
+import numpy as np 
 
 # --- GÜVENLİ IMPORT ---
 try:
@@ -150,9 +150,11 @@ def sehir_ismi_duzelt(sehir):
 
 # --- TABLO RENKLENDİRME İÇİN YENİ YARDIMCI FONKSİYON ---
 def highlight_val(val):
-    color = 'green' if val > 0 else 'red' if val < 0 else 'black'
-    weight = 'bold'
-    return f'color: {color}; font-weight: {weight}'
+    if isinstance(val, (int, float)):
+        color = 'green' if val > 0 else 'red' if val < 0 else 'black'
+        weight = 'bold'
+        return f'color: {color}; font-weight: {weight}'
+    return ''
 
 @st.cache_data
 def dolar_verisi_getir(baslangic_tarihi):
@@ -605,292 +607,416 @@ else:
     if df_sirket.empty:
         st.warning("Veri yok.")
     else:
-        st.sidebar.header("⚙️ Parametreler")
-        
-        sehirler = sorted(df_sirket['Şehir'].unique())
-        if "TÜRKİYE GENELİ" in sehirler:
-            sehirler.remove("TÜRKİYE GENELİ")
-            sehirler.insert(0, "TÜRKİYE GENELİ")
-            
-        idx_ank = sehirler.index('Ankara') if 'Ankara' in sehirler and "TÜRKİYE GENELİ" not in sehirler else 0
-        secilen_sehir = st.sidebar.selectbox("Şehir / Bölge", sehirler, index=0)
-        
-        segmentler = ['Otogaz', 'Tüplü', 'Dökme']
-        secilen_segment = st.sidebar.selectbox("Segment", segmentler)
-
+        # --- ANA MENÜ SEÇİMİ (YENİ ÖZELLİK) ---
+        st.sidebar.title("📌 Menü")
+        sayfa_secimi = st.sidebar.radio("Rapor Türü Seçiniz:", ["Aylık Analiz (Şehir Bazlı)", "Kümülatif Rapor (Ocak-Güncel)"])
         st.sidebar.markdown("---")
-        st.sidebar.header("🔗 Diğer Raporlar")
-        st.sidebar.markdown("⛽ [Akaryakıt Lisans Raporu](https://akartakip.streamlit.app/)")
-        st.sidebar.markdown("🔥 [LPG Lisans Raporu](https://lpgtakip.streamlit.app/)")
         
-        st.sidebar.markdown("---")
-        st.sidebar.header("📧 İletişim")
-        st.sidebar.info("kerim.aksu@milangaz.com.tr")
-        
-        df_sehir_sirket = df_sirket[df_sirket['Şehir'] == secilen_sehir]
-        col_pay = secilen_segment + " Pay"
-        
-        if secilen_sehir in ["Adana", "Bingöl"]:
-            st.error("⚠️ **SİSTEM UYARISI:** Adana ili için kaynak veri dosyalarında yapısal bozukluklar tespit edilmiştir (EPDK kaynaklı). Yanlış analiz oluşmaması adına Adana ili tüm sekmelerde geçici olarak erişime kapatılmıştır.")
-        else:
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "📈 Pazar Grafiği", 
-                "💵 Makro Analiz", 
-                "🥊 Rekabet Analizi", 
-                "🌡️ Mevsimsellik & Tahmin", 
-                "🧠 Stratejik Rapor"
-            ])
+        # =================================================================================================
+        # 1. SENARYO: AYLIK ANALİZ (ESKİ KODLARIN AYNISI)
+        # =================================================================================================
+        if sayfa_secimi == "Aylık Analiz (Şehir Bazlı)":
+            st.sidebar.header("⚙️ Parametreler")
             
-            with tab1:
-                st.info(f"ℹ️ **Bilgi:** Sol menüdeki **Şehir ({secilen_sehir})** ve **Segment ({secilen_segment})** alanlarını değiştirerek bu sayfadaki analizleri güncelleyebilirsiniz.")
-                col_f1, col_f2 = st.columns(2)
+            sehirler = sorted(df_sirket['Şehir'].unique())
+            if "TÜRKİYE GENELİ" in sehirler:
+                sehirler.remove("TÜRKİYE GENELİ")
+                sehirler.insert(0, "TÜRKİYE GENELİ")
                 
-                mevcut_sirketler_sehirde = sorted(df_sehir_sirket['Şirket'].unique())
-                session_key = f"secim_{secilen_sehir}"
-                if session_key not in st.session_state:
-                    varsayilan = [LIKITGAZ_NAME] if LIKITGAZ_NAME in mevcut_sirketler_sehirde else []
-                    st.session_state[session_key] = varsayilan
-                
-                with col_f1:
-                    secilen_sirketler = st.multiselect("Şirketler", mevcut_sirketler_sehirde, default=st.session_state[session_key], key="widget_" + session_key)
-                st.session_state[session_key] = secilen_sirketler
+            idx_ank = sehirler.index('Ankara') if 'Ankara' in sehirler and "TÜRKİYE GENELİ" not in sehirler else 0
+            secilen_sehir = st.sidebar.selectbox("Şehir / Bölge", sehirler, index=0)
+            
+            segmentler = ['Otogaz', 'Tüplü', 'Dökme']
+            secilen_segment = st.sidebar.selectbox("Segment", segmentler)
 
-                with col_f2:
-                    veri_tipi = st.radio("Veri Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
-                    y_col = col_pay if veri_tipi == "Pazar Payı (%)" else secilen_segment + " Ton"
+            st.sidebar.markdown("---")
+            st.sidebar.header("🔗 Diğer Raporlar")
+            st.sidebar.markdown("⛽ [Akaryakıt Lisans Raporu](https://akartakip.streamlit.app/)")
+            st.sidebar.markdown("🔥 [LPG Lisans Raporu](https://lpgtakip.streamlit.app/)")
+            
+            st.sidebar.markdown("---")
+            st.sidebar.header("📧 İletişim")
+            st.sidebar.info("kerim.aksu@milangaz.com.tr")
+            
+            df_sehir_sirket = df_sirket[df_sirket['Şehir'] == secilen_sehir]
+            col_pay = secilen_segment + " Pay"
+            
+            if secilen_sehir in ["Adana", "Bingöl"]:
+                st.error("⚠️ **SİSTEM UYARISI:** Adana ili için kaynak veri dosyalarında yapısal bozukluklar tespit edilmiştir (EPDK kaynaklı). Yanlış analiz oluşmaması adına Adana ili tüm sekmelerde geçici olarak erişime kapatılmıştır.")
+            else:
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    "📈 Pazar Grafiği", 
+                    "💵 Makro Analiz", 
+                    "🥊 Rekabet Analizi", 
+                    "🌡️ Mevsimsellik & Tahmin", 
+                    "🧠 Stratejik Rapor"
+                ])
                 
-                if secilen_sirketler:
-                    df_chart = df_sehir_sirket[df_sehir_sirket['Şirket'].isin(secilen_sirketler)]
-                    color_map = {s: OTHER_COLORS[i%len(OTHER_COLORS)] for i,s in enumerate(secilen_sirketler)}
-                    if LIKITGAZ_NAME in color_map: color_map[LIKITGAZ_NAME] = LIKITGAZ_COLOR
+                with tab1:
+                    st.info(f"ℹ️ **Bilgi:** Sol menüdeki **Şehir ({secilen_sehir})** ve **Segment ({secilen_segment})** alanlarını değiştirerek bu sayfadaki analizleri güncelleyebilirsiniz.")
+                    col_f1, col_f2 = st.columns(2)
                     
-                    fig = px.line(df_chart, x='Tarih', y=y_col, color='Şirket', markers=True,
-                                  color_discrete_map=color_map, title=f"{secilen_sehir} - {secilen_segment} Trendi",
-                                  hover_data={'Tarih': False, 'Tarih_Grafik': True})
-                    unique_dates = sorted(df_chart['Tarih'].unique())
-                    tick_texts = [format_tarih_grafik(pd.to_datetime(d)) for d in unique_dates]
-                    fig.update_xaxes(tickvals=unique_dates, ticktext=tick_texts)
-                    fig.update_layout(hovermode="x unified", legend=dict(orientation="h", y=1.1))
-                    fig.update_traces(patch={"line": {"width": 4}}, selector={"legendgroup": LIKITGAZ_NAME})
-                    fig = grafik_bayram_ekle(fig, df_chart['Tarih'])
-                    st.plotly_chart(fig, use_container_width=True)
+                    mevcut_sirketler_sehirde = sorted(df_sehir_sirket['Şirket'].unique())
+                    session_key = f"secim_{secilen_sehir}"
+                    if session_key not in st.session_state:
+                        varsayilan = [LIKITGAZ_NAME] if LIKITGAZ_NAME in mevcut_sirketler_sehirde else []
+                        st.session_state[session_key] = varsayilan
                     
-                st.markdown("---")
-                st.subheader(f"📋 Dönemsel Sıralama ve Yıllık Karşılaştırma ({secilen_sehir} - {secilen_segment})")
-                
-                donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
-                if len(donemler) > 0:
-                    secilen_donem = st.selectbox("Dönem Seç:", donemler)
-                    row_ref = df_sehir_sirket[df_sehir_sirket['Dönem'] == secilen_donem].iloc[0]
-                    curr_date = row_ref['Tarih']
-                    prev_date = curr_date - relativedelta(years=1)
-                    prev_donem = format_tarih_tr(prev_date)
+                    with col_f1:
+                        secilen_sirketler = st.multiselect("Şirketler", mevcut_sirketler_sehirde, default=st.session_state[session_key], key="widget_" + session_key)
+                    st.session_state[session_key] = secilen_sirketler
+
+                    with col_f2:
+                        veri_tipi = st.radio("Veri Tipi:", ["Pazar Payı (%)", "Satış Miktarı (Ton)"], horizontal=True)
+                        y_col = col_pay if veri_tipi == "Pazar Payı (%)" else secilen_segment + " Ton"
+                    
+                    if secilen_sirketler:
+                        df_chart = df_sehir_sirket[df_sehir_sirket['Şirket'].isin(secilen_sirketler)]
+                        color_map = {s: OTHER_COLORS[i%len(OTHER_COLORS)] for i,s in enumerate(secilen_sirketler)}
+                        if LIKITGAZ_NAME in color_map: color_map[LIKITGAZ_NAME] = LIKITGAZ_COLOR
+                        
+                        fig = px.line(df_chart, x='Tarih', y=y_col, color='Şirket', markers=True,
+                                    color_discrete_map=color_map, title=f"{secilen_sehir} - {secilen_segment} Trendi",
+                                    hover_data={'Tarih': False, 'Tarih_Grafik': True})
+                        unique_dates = sorted(df_chart['Tarih'].unique())
+                        tick_texts = [format_tarih_grafik(pd.to_datetime(d)) for d in unique_dates]
+                        fig.update_xaxes(tickvals=unique_dates, ticktext=tick_texts)
+                        fig.update_layout(hovermode="x unified", legend=dict(orientation="h", y=1.1))
+                        fig.update_traces(patch={"line": {"width": 4}}, selector={"legendgroup": LIKITGAZ_NAME})
+                        fig = grafik_bayram_ekle(fig, df_chart['Tarih'])
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                    st.markdown("---")
+                    st.subheader(f"📋 Dönemsel Sıralama ve Yıllık Karşılaştırma ({secilen_sehir} - {secilen_segment})")
+                    
+                    donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
+                    if len(donemler) > 0:
+                        secilen_donem = st.selectbox("Dönem Seç:", donemler)
+                        row_ref = df_sehir_sirket[df_sehir_sirket['Dönem'] == secilen_donem].iloc[0]
+                        curr_date = row_ref['Tarih']
+                        prev_date = curr_date - relativedelta(years=1)
+                        prev_donem = format_tarih_tr(prev_date)
+                        col_ton = secilen_segment + " Ton"
+                        df_curr = df_sehir_sirket[df_sehir_sirket['Tarih'] == curr_date][['Şirket', col_ton, col_pay]]
+                        df_prev = df_sehir_sirket[df_sehir_sirket['Tarih'] == prev_date][['Şirket', col_ton, col_pay]]
+                        df_final = pd.merge(df_curr, df_prev, on='Şirket', how='left', suffixes=('', '_prev'))
+                        col_ton_prev_name = f"Ton ({prev_donem})"
+                        col_pay_prev_name = f"Pay ({prev_donem})"
+                        df_final.rename(columns={col_ton: f"Ton ({secilen_donem})", col_pay: f"Pay ({secilen_donem})", col_ton + '_prev': col_ton_prev_name, col_pay + '_prev': col_pay_prev_name}, inplace=True)
+                        df_final.fillna(0, inplace=True)
+                        
+                        df_final[f"Fark Ton"] = df_final[f"Ton ({secilen_donem})"] - df_final[col_ton_prev_name]
+                        df_final[f"Fark Pay"] = df_final[f"Pay ({secilen_donem})"] - df_final[col_pay_prev_name]
+
+                        df_final = df_final.sort_values(f"Pay ({secilen_donem})", ascending=False).reset_index(drop=True)
+                        df_final.index += 1
+                        
+                        st.dataframe(df_final.style.format({
+                            f"Ton ({secilen_donem})": "{:,.2f}", 
+                            f"Pay ({secilen_donem})": "{:.2f}%", 
+                            col_ton_prev_name: "{:,.2f}", 
+                            col_pay_prev_name: "{:.2f}%",
+                            "Fark Ton": "{:+,.2f}",
+                            "Fark Pay": "{:+.2f}"
+                        }).map(highlight_val, subset=['Fark Ton', 'Fark Pay']), use_container_width=True)
+                    else:
+                        st.warning("Bu seçim için veri bulunamadı.")
+
+                with tab2:
+                    st.subheader(f"💵 Dolar Kuru ve Pazar Hacmi İlişkisi ({secilen_sehir} - {secilen_segment})")
+                    st.caption(f"Sol menüden parametreleri değiştirerek ({secilen_sehir} - {secilen_segment}) analizi yapabilirsiniz.")
+                    if not DOLAR_MODULU_VAR:
+                        st.warning("⚠️ 'yfinance' yüklü değil.")
+                    else:
+                        col_ton = secilen_segment + " Ton"
+                        df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
+                        df_sehir_toplam = df_sehir_toplam[df_sehir_toplam[col_ton] > 0.1]
+                        
+                        if not df_sehir_toplam.empty:
+                            last_sales_date = df_sehir_toplam['Tarih'].max()
+                            min_date = df_sehir_toplam['Tarih'].min()
+                            df_dolar = dolar_verisi_getir(min_date)
+                            
+                            if not df_dolar.empty:
+                                df_dolar = df_dolar[df_dolar['Tarih'] <= last_sales_date]
+                                df_makro = pd.merge(df_sehir_toplam, df_dolar, on='Tarih', how='inner')
+                                
+                                fig_makro = go.Figure()
+                                fig_makro.add_trace(go.Bar(x=df_makro['Tarih'], y=df_makro[col_ton], name='Pazar (Ton)', marker_color='#3366CC', opacity=0.6))
+                                fig_makro.add_trace(go.Scatter(x=df_makro['Tarih'], y=df_makro['Dolar Kuru'], name='Dolar (TL)', yaxis='y2', line=dict(color='#DC3912', width=3)))
+                                unique_dates_m = sorted(df_makro['Tarih'].unique())
+                                tick_texts_m = [format_tarih_grafik(pd.to_datetime(d)) for d in unique_dates_m]
+                                fig_makro.update_layout(title=f"{secilen_sehir} Hacim vs Dolar", yaxis=dict(title='Satış (Ton)'), yaxis2=dict(title='USD/TL', overlaying='y', side='right'), hovermode='x unified', legend=dict(orientation="h", y=1.1), xaxis=dict(tickvals=unique_dates_m, ticktext=tick_texts_m))
+                                fig_makro = grafik_bayram_ekle(fig_makro, df_makro['Tarih'])
+                                st.plotly_chart(fig_makro, use_container_width=True)
+                            else: st.warning("Dolar verisi alınamadı.")
+                        else: st.warning("Yeterli veri yok.")
+
+                with tab3:
                     col_ton = secilen_segment + " Ton"
-                    df_curr = df_sehir_sirket[df_sehir_sirket['Tarih'] == curr_date][['Şirket', col_ton, col_pay]]
-                    df_prev = df_sehir_sirket[df_sehir_sirket['Tarih'] == prev_date][['Şirket', col_ton, col_pay]]
-                    df_final = pd.merge(df_curr, df_prev, on='Şirket', how='left', suffixes=('', '_prev'))
-                    col_ton_prev_name = f"Ton ({prev_donem})"
-                    col_pay_prev_name = f"Pay ({prev_donem})"
-                    df_final.rename(columns={col_ton: f"Ton ({secilen_donem})", col_pay: f"Pay ({secilen_donem})", col_ton + '_prev': col_ton_prev_name, col_pay + '_prev': col_pay_prev_name}, inplace=True)
-                    df_final.fillna(0, inplace=True)
-                    
-                    df_final[f"Fark Ton"] = df_final[f"Ton ({secilen_donem})"] - df_final[col_ton_prev_name]
-                    df_final[f"Fark Pay"] = df_final[f"Pay ({secilen_donem})"] - df_final[col_pay_prev_name]
+                    if not df_sehir_sirket.empty:
+                        son_tarih = df_sehir_sirket['Tarih'].max()
+                        gecen_yil = son_tarih - relativedelta(years=1)
+                        
+                        st.subheader(f"🥊 Kazananlar ve Kaybedenler ({secilen_sehir} - {secilen_segment})")
+                        st.caption(f"{format_tarih_tr(gecen_yil)} ile {format_tarih_tr(son_tarih)} arasındaki Pazar Payı değişimi.")
+                        
+                        df_now = df_sehir_sirket[df_sehir_sirket['Tarih'] == son_tarih][['Şirket', col_pay]]
+                        df_old = df_sehir_sirket[df_sehir_sirket['Tarih'] == gecen_yil][['Şirket', col_pay]]
+                        
+                        if not df_now.empty and not df_old.empty:
+                            df_diff = pd.merge(df_now, df_old, on='Şirket', how='inner', suffixes=('_now', '_old'))
+                            df_diff['Fark'] = df_diff[col_pay + '_now'] - df_diff[col_pay + '_old']
+                            df_diff = df_diff[df_diff['Fark'] != 0].sort_values('Fark', ascending=True)
+                            df_diff['Renk'] = df_diff['Fark'].apply(lambda x: 'Kazanan' if x > 0 else 'Kaybeden')
+                            color_map_w = {'Kazanan': '#2ECC71', 'Kaybeden': '#E74C3C'}
+                            
+                            fig_diff = px.bar(df_diff, x='Fark', y='Şirket', orientation='h', color='Renk', color_discrete_map=color_map_w, title="Pazar Payı Değişimi (Puan)")
+                            fig_diff.update_layout(
+                                yaxis=dict(automargin=True),
+                                height=max(500, len(df_diff)*35),
+                                margin=dict(l=20)
+                            )
+                            st.plotly_chart(fig_diff, use_container_width=True)
+                        else: st.warning("Yıllık kıyaslama için veri eksik.")
+                        
+                        st.markdown("---")
+                        st.subheader(f"🧮 Pazar Rekabet Yoğunluğu (HHI) - {secilen_sehir}")
+                        if not df_now.empty:
+                            hhi_score = (df_now[col_pay] ** 2).sum()
+                            fig_hhi = go.Figure(go.Indicator(mode = "gauge+number", value = hhi_score, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "HHI Skoru"}, gauge = {'axis': {'range': [0, 10000]}, 'bar': {'color': "black"}, 'steps': [{'range': [0, 1500], 'color': '#2ECC71'}, {'range': [1500, 2500], 'color': '#F1C40F'}, {'range': [2500, 10000], 'color': '#E74C3C'}]}))
+                            c_hhi1, c_hhi2 = st.columns([1, 2])
+                            with c_hhi1: st.plotly_chart(fig_hhi, use_container_width=True)
+                            with c_hhi2:
+                                st.markdown("""
+                                #### 🧠 HHI (Herfindahl-Hirschman) Endeksi Nedir?
+                                Bu metrik, bir pazarın ne kadar **rekabetçi** veya ne kadar **tekelleşmiş** olduğunu ölçen uluslararası bir standarttır.
+                                
+                                *   🟢 **< 1.500 (Düşük Yoğunluk):** **Rekabetçi Pazar.** Pazarda çok sayıda oyuncu var, hiçbir firma tek başına hakim değil. Pazara giriş kolaydır.
+                                *   🟡 **1.500 - 2.500 (Orta Yoğunluk):** **Oligopol Eğilimi.** Pazar, birkaç büyük şirketin kontrolüne girmeye başlamış. Rekabet zorlaşıyor.
+                                *   🔴 **> 2.500 (Yüksek Yoğunluk):** **Tekelleşmiş Pazar.** Pazarın hakimi 1 veya 2 şirkettir. Yeni oyuncuların barınması veya pazar payı çalması çok zordur.
+                                """)
+                    else: st.warning("Veri yok.")
 
-                    df_final = df_final.sort_values(f"Pay ({secilen_donem})", ascending=False).reset_index(drop=True)
-                    df_final.index += 1
-                    
-                    # --- TABLO GÖSTERİMİ VE RENKLENDİRME ---
-                    st.dataframe(df_final.style.format({
-                        f"Ton ({secilen_donem})": "{:,.2f}", 
-                        f"Pay ({secilen_donem})": "{:.2f}%", 
-                        col_ton_prev_name: "{:,.2f}", 
-                        col_pay_prev_name: "{:.2f}%",
-                        "Fark Ton": "{:+,.2f}",
-                        "Fark Pay": "{:+.2f}"
-                    }).map(highlight_val, subset=['Fark Ton', 'Fark Pay']), use_container_width=True)
-                    # ----------------------------------------
-                else:
-                    st.warning("Bu seçim için veri bulunamadı.")
-
-            with tab2:
-                st.subheader(f"💵 Dolar Kuru ve Pazar Hacmi İlişkisi ({secilen_sehir} - {secilen_segment})")
-                st.caption(f"Sol menüden parametreleri değiştirerek ({secilen_sehir} - {secilen_segment}) analizi yapabilirsiniz.")
-                if not DOLAR_MODULU_VAR:
-                    st.warning("⚠️ 'yfinance' yüklü değil.")
-                else:
+                with tab4:
                     col_ton = secilen_segment + " Ton"
                     df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
-                    df_sehir_toplam = df_sehir_toplam[df_sehir_toplam[col_ton] > 0.1]
                     
-                    if not df_sehir_toplam.empty:
-                        last_sales_date = df_sehir_toplam['Tarih'].max()
-                        min_date = df_sehir_toplam['Tarih'].min()
-                        df_dolar = dolar_verisi_getir(min_date)
-                        
-                        if not df_dolar.empty:
-                            df_dolar = df_dolar[df_dolar['Tarih'] <= last_sales_date]
-                            df_makro = pd.merge(df_sehir_toplam, df_dolar, on='Tarih', how='inner')
-                            
-                            fig_makro = go.Figure()
-                            fig_makro.add_trace(go.Bar(x=df_makro['Tarih'], y=df_makro[col_ton], name='Pazar (Ton)', marker_color='#3366CC', opacity=0.6))
-                            fig_makro.add_trace(go.Scatter(x=df_makro['Tarih'], y=df_makro['Dolar Kuru'], name='Dolar (TL)', yaxis='y2', line=dict(color='#DC3912', width=3)))
-                            unique_dates_m = sorted(df_makro['Tarih'].unique())
-                            tick_texts_m = [format_tarih_grafik(pd.to_datetime(d)) for d in unique_dates_m]
-                            fig_makro.update_layout(title=f"{secilen_sehir} Hacim vs Dolar", yaxis=dict(title='Satış (Ton)'), yaxis2=dict(title='USD/TL', overlaying='y', side='right'), hovermode='x unified', legend=dict(orientation="h", y=1.1), xaxis=dict(tickvals=unique_dates_m, ticktext=tick_texts_m))
-                            fig_makro = grafik_bayram_ekle(fig_makro, df_makro['Tarih'])
-                            st.plotly_chart(fig_makro, use_container_width=True)
-                        else: st.warning("Dolar verisi alınamadı.")
-                    else: st.warning("Yeterli veri yok.")
-
-            with tab3:
-                col_ton = secilen_segment + " Ton"
-                if not df_sehir_sirket.empty:
-                    son_tarih = df_sehir_sirket['Tarih'].max()
-                    gecen_yil = son_tarih - relativedelta(years=1)
+                    df_likitgaz = df_sehir_sirket[df_sehir_sirket['Şirket'] == LIKITGAZ_NAME].sort_values('Tarih')
                     
-                    st.subheader(f"🥊 Kazananlar ve Kaybedenler ({secilen_sehir} - {secilen_segment})")
-                    st.caption(f"{format_tarih_tr(gecen_yil)} ile {format_tarih_tr(son_tarih)} arasındaki Pazar Payı değişimi.")
-                    
-                    df_now = df_sehir_sirket[df_sehir_sirket['Tarih'] == son_tarih][['Şirket', col_pay]]
-                    df_old = df_sehir_sirket[df_sehir_sirket['Tarih'] == gecen_yil][['Şirket', col_pay]]
-                    
-                    if not df_now.empty and not df_old.empty:
-                        df_diff = pd.merge(df_now, df_old, on='Şirket', how='inner', suffixes=('_now', '_old'))
-                        df_diff['Fark'] = df_diff[col_pay + '_now'] - df_diff[col_pay + '_old']
-                        df_diff = df_diff[df_diff['Fark'] != 0].sort_values('Fark', ascending=True)
-                        df_diff['Renk'] = df_diff['Fark'].apply(lambda x: 'Kazanan' if x > 0 else 'Kaybeden')
-                        color_map_w = {'Kazanan': '#2ECC71', 'Kaybeden': '#E74C3C'}
-                        
-                        fig_diff = px.bar(df_diff, x='Fark', y='Şirket', orientation='h', color='Renk', color_discrete_map=color_map_w, title="Pazar Payı Değişimi (Puan)")
-                        
-                        # --- GRAFİK İSİM VE BOYUT AYARI ---
-                        # İsimlerin kesilmemesi için automargin ve dinamik yükseklik
-                        fig_diff.update_layout(
-                            yaxis=dict(automargin=True),
-                            height=max(500, len(df_diff)*35),
-                            margin=dict(l=20) # Ekstra sol boşluk bırak
-                        )
-                        # ----------------------------------
-                        
-                        st.plotly_chart(fig_diff, use_container_width=True)
-                    else: st.warning("Yıllık kıyaslama için veri eksik.")
-                    
-                    st.markdown("---")
-                    st.subheader(f"🧮 Pazar Rekabet Yoğunluğu (HHI) - {secilen_sehir}")
-                    if not df_now.empty:
-                        hhi_score = (df_now[col_pay] ** 2).sum()
-                        fig_hhi = go.Figure(go.Indicator(mode = "gauge+number", value = hhi_score, domain = {'x': [0, 1], 'y': [0, 1]}, title = {'text': "HHI Skoru"}, gauge = {'axis': {'range': [0, 10000]}, 'bar': {'color': "black"}, 'steps': [{'range': [0, 1500], 'color': '#2ECC71'}, {'range': [1500, 2500], 'color': '#F1C40F'}, {'range': [2500, 10000], 'color': '#E74C3C'}]}))
-                        c_hhi1, c_hhi2 = st.columns([1, 2])
-                        with c_hhi1: st.plotly_chart(fig_hhi, use_container_width=True)
-                        with c_hhi2:
-                            st.markdown("""
-                            #### 🧠 HHI (Herfindahl-Hirschman) Endeksi Nedir?
-                            Bu metrik, bir pazarın ne kadar **rekabetçi** veya ne kadar **tekelleşmiş** olduğunu ölçen uluslararası bir standarttır.
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
+                        st.subheader(f"📅 Yıllara Göre Mevsimsel Döngü ({secilen_sehir})")
+                        if not df_sehir_toplam.empty:
+                            df_mevsim = df_sehir_toplam.copy()
+                            df_mevsim['Yıl'] = df_mevsim['Tarih'].dt.year.astype(str)
+                            df_mevsim['Ay_No'] = df_mevsim['Tarih'].dt.month
+                            df_mevsim['Ay_Isim'] = df_mevsim['Ay_No'].apply(lambda x: TR_AYLAR[x])
+                            df_mevsim = df_mevsim.sort_values(['Yıl', 'Ay_No'])
+                            fig_cycle = px.line(df_mevsim, x='Ay_Isim', y=col_ton, color='Yıl', markers=True, title=f"{secilen_sehir} Satış Döngüsü")
+                            st.plotly_chart(fig_cycle, use_container_width=True)
                             
-                            *   🟢 **< 1.500 (Düşük Yoğunluk):** **Rekabetçi Pazar.** Pazarda çok sayıda oyuncu var, hiçbir firma tek başına hakim değil. Pazara giriş kolaydır.
-                            *   🟡 **1.500 - 2.500 (Orta Yoğunluk):** **Oligopol Eğilimi.** Pazar, birkaç büyük şirketin kontrolüne girmeye başlamış. Rekabet zorlaşıyor.
-                            *   🔴 **> 2.500 (Yüksek Yoğunluk):** **Tekelleşmiş Pazar.** Pazarın hakimi 1 veya 2 şirkettir. Yeni oyuncuların barınması veya pazar payı çalması çok zordur.
-                            """)
-                else: st.warning("Veri yok.")
-
-            with tab4:
-                col_ton = secilen_segment + " Ton"
-                df_sehir_toplam = df_sehir_sirket.groupby('Tarih')[col_ton].sum().reset_index()
-                
-                df_likitgaz = df_sehir_sirket[df_sehir_sirket['Şirket'] == LIKITGAZ_NAME].sort_values('Tarih')
-                
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    st.subheader(f"📅 Yıllara Göre Mevsimsel Döngü ({secilen_sehir})")
-                    if not df_sehir_toplam.empty:
-                        df_mevsim = df_sehir_toplam.copy()
-                        df_mevsim['Yıl'] = df_mevsim['Tarih'].dt.year.astype(str)
-                        df_mevsim['Ay_No'] = df_mevsim['Tarih'].dt.month
-                        df_mevsim['Ay_Isim'] = df_mevsim['Ay_No'].apply(lambda x: TR_AYLAR[x])
-                        df_mevsim = df_mevsim.sort_values(['Yıl', 'Ay_No'])
-                        fig_cycle = px.line(df_mevsim, x='Ay_Isim', y=col_ton, color='Yıl', markers=True, title=f"{secilen_sehir} Satış Döngüsü")
-                        st.plotly_chart(fig_cycle, use_container_width=True)
-                        
-                with col_m2:
-                    st.subheader(f"🔮 {secilen_sehir} - {secilen_segment} 1 Yıllık Tahmin")
-                    if len(df_sehir_toplam) > 12:
-                        last_date = df_sehir_toplam['Tarih'].max()
-                        forecast_data = []
-                        
-                        for i in range(1, 13):
-                            next_date = last_date + relativedelta(months=i)
-                            prev_year_date = next_date - relativedelta(years=1)
+                    with col_m2:
+                        st.subheader(f"🔮 {secilen_sehir} - {secilen_segment} 1 Yıllık Tahmin")
+                        if len(df_sehir_toplam) > 12:
+                            last_date = df_sehir_toplam['Tarih'].max()
+                            forecast_data = []
                             
-                            mask = (df_sehir_toplam['Tarih'].dt.year == prev_year_date.year) & (df_sehir_toplam['Tarih'].dt.month == prev_year_date.month)
-                            past_val_row = df_sehir_toplam[mask]
-                            if not past_val_row.empty: val_prev_year = past_val_row[col_ton].values[0]
-                            else:
-                                mask_all_years = (df_sehir_toplam['Tarih'].dt.month == next_date.month)
-                                val_prev_year = df_sehir_toplam.loc[mask_all_years, col_ton].mean()
-                            
-                            trend_val = df_sehir_toplam.tail(3)[col_ton].mean()
-                            if val_prev_year > 0: forecast_val = (val_prev_year * 0.6) + (trend_val * 0.4)
-                            else: forecast_val = trend_val
-                            
-                            likit_forecast = 0
-                            if not df_likitgaz.empty:
-                                mask_likit = (df_likitgaz['Tarih'].dt.year == prev_year_date.year) & (df_likitgaz['Tarih'].dt.month == prev_year_date.month)
-                                past_row_likit = df_likitgaz[mask_likit]
-                                if not past_row_likit.empty: val_prev_likit = past_row_likit[col_ton].values[0]
-                                else: 
-                                    mask_all_likit = (df_likitgaz['Tarih'].dt.month == next_date.month)
-                                    val_prev_likit = df_likitgaz.loc[mask_all_likit, col_ton].mean()
-                                    if pd.isna(val_prev_likit): val_prev_likit = 0
+                            for i in range(1, 13):
+                                next_date = last_date + relativedelta(months=i)
+                                prev_year_date = next_date - relativedelta(years=1)
                                 
-                                if len(df_likitgaz) >= 3:
-                                    trend_likit = df_likitgaz.tail(3)[col_ton].mean()
+                                mask = (df_sehir_toplam['Tarih'].dt.year == prev_year_date.year) & (df_sehir_toplam['Tarih'].dt.month == prev_year_date.month)
+                                past_val_row = df_sehir_toplam[mask]
+                                if not past_val_row.empty: val_prev_year = past_val_row[col_ton].values[0]
                                 else:
-                                    trend_likit = df_likitgaz[col_ton].mean()
+                                    mask_all_years = (df_sehir_toplam['Tarih'].dt.month == next_date.month)
+                                    val_prev_year = df_sehir_toplam.loc[mask_all_years, col_ton].mean()
                                 
-                                if val_prev_likit > 0: likit_forecast = (val_prev_likit * 0.6) + (trend_likit * 0.4)
-                                else: likit_forecast = trend_likit
+                                trend_val = df_sehir_toplam.tail(3)[col_ton].mean()
+                                if val_prev_year > 0: forecast_val = (val_prev_year * 0.6) + (trend_val * 0.4)
+                                else: forecast_val = trend_val
+                                
+                                likit_forecast = 0
+                                if not df_likitgaz.empty:
+                                    mask_likit = (df_likitgaz['Tarih'].dt.year == prev_year_date.year) & (df_likitgaz['Tarih'].dt.month == prev_year_date.month)
+                                    past_row_likit = df_likitgaz[mask_likit]
+                                    if not past_row_likit.empty: val_prev_likit = past_row_likit[col_ton].values[0]
+                                    else: 
+                                        mask_all_likit = (df_likitgaz['Tarih'].dt.month == next_date.month)
+                                        val_prev_likit = df_likitgaz.loc[mask_all_likit, col_ton].mean()
+                                        if pd.isna(val_prev_likit): val_prev_likit = 0
+                                    
+                                    if len(df_likitgaz) >= 3:
+                                        trend_likit = df_likitgaz.tail(3)[col_ton].mean()
+                                    else:
+                                        trend_likit = df_likitgaz[col_ton].mean()
+                                    
+                                    if val_prev_likit > 0: likit_forecast = (val_prev_likit * 0.6) + (trend_likit * 0.4)
+                                    else: likit_forecast = trend_likit
 
-                            forecast_data.append({
-                                'Tarih': format_tarih_tr(next_date),
-                                'Pazar Tahmin (Ton)': forecast_val,
-                                'Likitgaz Tahmin (Ton)': likit_forecast
-                            })
-                            
-                        st.table(pd.DataFrame(forecast_data).style.format({'Pazar Tahmin (Ton)': '{:,.0f}', 'Likitgaz Tahmin (Ton)': '{:,.0f}'}))
-                        st.markdown("""
-                        > **ℹ️ Nasıl Hesaplandı?**
-                        > Bu tahminler, geçmiş verilerin istatistiksel analizine dayanır.
-                        > **Formül:** %60 Mevsimsellik (Geçen yılın aynı ayı) + %40 Trend (Son 3 ayın ortalaması).
-                        """)
-                    else: st.warning("Yetersiz veri.")
+                                forecast_data.append({
+                                    'Tarih': format_tarih_tr(next_date),
+                                    'Pazar Tahmin (Ton)': forecast_val,
+                                    'Likitgaz Tahmin (Ton)': likit_forecast
+                                })
+                                
+                            st.table(pd.DataFrame(forecast_data).style.format({'Pazar Tahmin (Ton)': '{:,.0f}', 'Likitgaz Tahmin (Ton)': '{:,.0f}'}))
+                            st.markdown("""
+                            > **ℹ️ Nasıl Hesaplandı?**
+                            > Bu tahminler, geçmiş verilerin istatistiksel analizine dayanır.
+                            > **Formül:** %60 Mevsimsellik (Geçen yılın aynı ayı) + %40 Trend (Son 3 ayın ortalaması).
+                            """)
+                        else: st.warning("Yetersiz veri.")
 
-            with tab5:
-                st.info("ℹ️ **Bilgilendirme:** Bu sayfadaki tüm analizler, sol menüde seçtiğiniz **Şehir** ve **Segment** kriterlerine göre otomatik oluşturulur.")
-                sirketler_listesi = sorted(df_sehir_sirket['Şirket'].unique())
-                varsayilan_index = sirketler_listesi.index(LIKITGAZ_NAME) if LIKITGAZ_NAME in sirketler_listesi else 0
-                secilen_odak_sirket = st.selectbox("🔎 Analiz Edilecek Dağıtıcı Seçiniz:", sirketler_listesi, index=varsayilan_index)
-                st.markdown("---")
-                if not df_turkiye.empty:
-                    tr_rapor = turkiye_pazar_analizi(df_turkiye, secilen_segment)
-                    st.info("🇹🇷 Türkiye Geneli Özet Bilgi (Resmi Veri)")
-                    for l in tr_rapor: st.markdown(l)
+                with tab5:
+                    st.info("ℹ️ **Bilgilendirme:** Bu sayfadaki tüm analizler, sol menüde seçtiğiniz **Şehir** ve **Segment** kriterlerine göre otomatik oluşturulur.")
+                    sirketler_listesi = sorted(df_sehir_sirket['Şirket'].unique())
+                    varsayilan_index = sirketler_listesi.index(LIKITGAZ_NAME) if LIKITGAZ_NAME in sirketler_listesi else 0
+                    secilen_odak_sirket = st.selectbox("🔎 Analiz Edilecek Dağıtıcı Seçiniz:", sirketler_listesi, index=varsayilan_index)
                     st.markdown("---")
-                    if not df_turkiye_sirket.empty:
-                        odak_tr_rapor = sirket_turkiye_analizi(df_turkiye_sirket, secilen_segment, secilen_odak_sirket)
-                        if len(odak_tr_rapor) > 1:
-                             for l in odak_tr_rapor: st.markdown(l)
+                    if not df_turkiye.empty:
+                        tr_rapor = turkiye_pazar_analizi(df_turkiye, secilen_segment)
+                        st.info("🇹🇷 Türkiye Geneli Özet Bilgi (Resmi Veri)")
+                        for l in tr_rapor: st.markdown(l)
+                        st.markdown("---")
+                        if not df_turkiye_sirket.empty:
+                            odak_tr_rapor = sirket_turkiye_analizi(df_turkiye_sirket, secilen_segment, secilen_odak_sirket)
+                            if len(odak_tr_rapor) > 1:
+                                for l in odak_tr_rapor: st.markdown(l)
+                    st.markdown("---")
+                    if not df_iller.empty:
+                        p_txt, s_txt, r_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment, secilen_odak_sirket)
+                        for l in p_txt: st.markdown(l)
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            for l in s_txt: st.markdown(l)
+                        with c2:
+                            for l in r_txt:
+                                if "🛑" in l or "🔴" in l: st.error(l)
+                                elif "🔥" in l or "🟢" in l: st.success(l)
+                                elif "📉" in l or "🟠" in l: st.warning(l)
+                                else: st.info(l)
+                    else: st.error("İl verileri eksik.")
+
+        # =================================================================================================
+        # 2. SENARYO: KÜMÜLATİF RAPOR (YENİ EKLEME)
+        # =================================================================================================
+        else:
+            if df_turkiye.empty or df_turkiye_sirket.empty:
+                st.error("Kümülatif rapor için yeterli Türkiye verisi bulunamadı.")
+            else:
+                st.sidebar.markdown("### Kümülatif Filtreler")
+                max_date = df_turkiye['Tarih'].max()
+                years = sorted(df_turkiye['Tarih'].dt.year.unique(), reverse=True)
+                secilen_yil = st.sidebar.selectbox("Yıl Seçiniz", years, index=0)
+                
+                # Seçilen yıldaki mevcut aylar
+                df_year = df_turkiye[df_turkiye['Tarih'].dt.year == secilen_yil]
+                months = sorted(df_year['Tarih'].dt.month.unique(), reverse=True)
+                month_names = [TR_AYLAR[m] for m in months]
+                secilen_ay_isim = st.sidebar.selectbox("Bitiş Ayı Seçiniz", month_names, index=0)
+                secilen_ay = [k for k, v in TR_AYLAR.items() if v == secilen_ay_isim][0]
+                
+                start_date = pd.Timestamp(year=secilen_yil, month=1, day=1)
+                end_date = pd.Timestamp(year=secilen_yil, month=secilen_ay, day=1)
+                
+                prev_start_date = pd.Timestamp(year=secilen_yil-1, month=1, day=1)
+                prev_end_date = pd.Timestamp(year=secilen_yil-1, month=secilen_ay, day=1)
+                
+                st.header(f"📈 Kümülatif Rapor: Ocak - {secilen_ay_isim} {secilen_yil}")
                 st.markdown("---")
-                if not df_iller.empty:
-                    p_txt, s_txt, r_txt = stratejik_analiz_raporu(df_sehir_sirket, df_iller, secilen_sehir, secilen_segment, secilen_odak_sirket)
-                    for l in p_txt: st.markdown(l)
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        for l in s_txt: st.markdown(l)
-                    with c2:
-                        for l in r_txt:
-                            if "🛑" in l or "🔴" in l: st.error(l)
-                            elif "🔥" in l or "🟢" in l: st.success(l)
-                            elif "📉" in l or "🟠" in l: st.warning(l)
-                            else: st.info(l)
-                else: st.error("İl verileri eksik.")
+
+                # --- BÖLÜM 1: ÜRÜN TÜRÜNE GÖRE KARŞILAŞTIRMA (Resim 1) ---
+                st.subheader(f"1. Ürün Türüne Göre LPG Satışlarının Ocak-{secilen_ay_isim} Dönemi Karşılaştırması")
+                
+                # Veri Hazırlama
+                df_curr = df_turkiye[(df_turkiye['Tarih'] >= start_date) & (df_turkiye['Tarih'] <= end_date)]
+                df_prev = df_turkiye[(df_turkiye['Tarih'] >= prev_start_date) & (df_turkiye['Tarih'] <= prev_end_date)]
+                
+                def calculate_totals(df):
+                    res = {
+                        'TÜPLÜ': df['Tüplü Ton'].sum(),
+                        'DÖKME': df['Dökme Ton'].sum(),
+                        'OTOGAZ': df['Otogaz Ton'].sum()
+                    }
+                    res['Genel Toplam'] = sum(res.values())
+                    return res
+
+                totals_curr = calculate_totals(df_curr)
+                totals_prev = calculate_totals(df_prev)
+                
+                summary_data = []
+                for k in ['TÜPLÜ', 'DÖKME', 'OTOGAZ', 'Genel Toplam']:
+                    t_curr = totals_curr[k]
+                    t_prev = totals_prev[k]
+                    
+                    pay_curr = (t_curr / totals_curr['Genel Toplam'] * 100) if totals_curr['Genel Toplam'] > 0 else 0
+                    pay_prev = (t_prev / totals_prev['Genel Toplam'] * 100) if totals_prev['Genel Toplam'] > 0 else 0
+                    degisim = ((t_curr - t_prev) / t_prev * 100) if t_prev > 0 else 0
+                    
+                    summary_data.append({
+                        'Ürün Türü': k,
+                        f'Ocak-{secilen_ay_isim} {secilen_yil-1} Satış (Ton)': t_prev,
+                        f'Pay {secilen_yil-1} (%)': pay_prev,
+                        f'Ocak-{secilen_ay_isim} {secilen_yil} Satış (Ton)': t_curr,
+                        f'Pay {secilen_yil} (%)': pay_curr,
+                        'Değişim (%)': degisim
+                    })
+                
+                df_summary = pd.DataFrame(summary_data)
+                
+                # Tablo Gösterimi
+                format_dict = {
+                    f'Ocak-{secilen_ay_isim} {secilen_yil-1} Satış (Ton)': "{:,.2f}",
+                    f'Pay {secilen_yil-1} (%)': "{:.2f}",
+                    f'Ocak-{secilen_ay_isim} {secilen_yil} Satış (Ton)': "{:,.2f}",
+                    f'Pay {secilen_yil} (%)': "{:.2f}",
+                    'Değişim (%)': "{:+.2f}"
+                }
+                st.dataframe(df_summary.style.format(format_dict).map(highlight_val, subset=['Değişim (%)']), use_container_width=True)
+
+                st.markdown("---")
+                
+                # --- BÖLÜM 2: DAĞITICI BAZLI KÜMÜLATİF (Resim 2) ---
+                st.subheader(f"2. Ocak-{secilen_ay_isim} {secilen_yil} Dönemi Dağıtıcı Bazlı Pazar Payları")
+                
+                df_s_curr = df_turkiye_sirket[(df_turkiye_sirket['Tarih'] >= start_date) & (df_turkiye_sirket['Tarih'] <= end_date)]
+                
+                # Şirket bazında topla
+                df_dist = df_s_curr.groupby('Şirket')[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum().reset_index()
+                df_dist['Toplam Ton'] = df_dist['Tüplü Ton'] + df_dist['Dökme Ton'] + df_dist['Otogaz Ton']
+                
+                # Genel Toplamlar (Pay hesabı için)
+                grand_total_tuplu = df_dist['Tüplü Ton'].sum()
+                grand_total_dokme = df_dist['Dökme Ton'].sum()
+                grand_total_otogaz = df_dist['Otogaz Ton'].sum()
+                grand_total_all = df_dist['Toplam Ton'].sum()
+                
+                # Payları Hesapla
+                # Not: Resimdeki tabloda "Pay" sütunu, o ürünün kendi toplamına göre payıdır.
+                # Örn: Aygaz Tüplü Payı = Aygaz Tüplü / Toplam Tüplü Pazarı
+                
+                df_dist['Tüplü Pay (%)'] = (df_dist['Tüplü Ton'] / grand_total_tuplu * 100).fillna(0)
+                df_dist['Dökme Pay (%)'] = (df_dist['Dökme Ton'] / grand_total_dokme * 100).fillna(0)
+                df_dist['Otogaz Pay (%)'] = (df_dist['Otogaz Ton'] / grand_total_otogaz * 100).fillna(0)
+                df_dist['Toplam Pay (%)'] = (df_dist['Toplam Ton'] / grand_total_all * 100).fillna(0)
+                
+                # Sıralama (Toplam Paya göre)
+                df_dist = df_dist.sort_values('Toplam Pay (%)', ascending=False).reset_index(drop=True)
+                df_dist.index += 1
+                
+                # İstenen Sütun Sırası
+                cols_display = [
+                    'Şirket', 
+                    'Tüplü Ton', 'Tüplü Pay (%)',
+                    'Dökme Ton', 'Dökme Pay (%)',
+                    'Otogaz Ton', 'Otogaz Pay (%)',
+                    'Toplam Ton', 'Toplam Pay (%)'
+                ]
+                
+                df_display = df_dist[cols_display]
+                
+                format_dict_dist = {col: "{:,.2f}" if "Ton" in col else "{:.2f}" for col in df_display.columns if col != 'Şirket'}
+                
+                st.dataframe(df_display.style.format(format_dict_dist), use_container_width=True)
