@@ -561,70 +561,33 @@ def verileri_oku():
             
     return df_sirket, df_iller, df_turkiye, df_turkiye_sirket
 
-# --- GÜNCELLENMİŞ TABLO TARAMA ---
+# --- GÜNCELLENMİŞ TABLO TARAMA (DAĞITICI BAZLI KISIM İÇİN) ---
 def extract_table_by_content_final(doc, table_type):
     """
-    table_type 1: Tablo 3.4 (Genel Karşılaştırma - 2024 vs 2025)
+    table_type 1: Tablo 3.4 (Bu senaryoda hardcoded kullanıyoruz, bu fonksiyonda pas geçilebilir ama yapı bozulmasın diye tutuyoruz)
     table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay)
     """
     for table in doc.tables:
         text_signature = ""
         try:
             # İlk satırlardaki başlıkları kontrol et
-            rows_to_check = table.rows[:4] if len(table.rows) > 4 else table.rows
+            rows_to_check = table.rows[:15] if len(table.rows) > 15 else table.rows
             for row in rows_to_check:
                 for cell in row.cells:
                     text_signature += cell.text.upper().strip() + " "
         except: continue
 
-        # --- TİP 1: GENEL KARŞILAŞTIRMA (Tablo 3.4) ---
-        # Bu tabloda "ÜRÜN TÜRÜ", "SATIŞ", "PAY" ve "DEĞİŞİM" kelimeleri olur.
-        if table_type == 1:
-            if "ÜRÜN TÜRÜ" in text_signature and "DEĞİŞİM" in text_signature:
-                data = []
-                for row in table.rows:
-                    cells = row.cells
-                    if len(cells) < 6: continue
-                    
-                    first_cell = cells[0].text.strip()
-                    # Başlık satırlarını atla, sadece veri satırlarını al
-                    if "ÜRÜN" in first_cell.upper() or "SATIŞ" in first_cell.upper(): continue
-                    if not first_cell: continue
-                    
-                    tur = "Genel Toplam" if "TOPLAM" in first_cell.upper() else first_cell
-                    
-                    # Tablo 3.4 Yapısı (Resme göre):
-                    # [0] Tür, [1] GeçenYılTon, [2] GeçenYılPay, [3] BuYılTon, [4] BuYılPay, [5] Değişim
-                    try:
-                        data.append({
-                            "Ürün Türü": tur,
-                            "Geçen Sene (Ton)": sayi_temizle(cells[1].text),
-                            "Geçen Sene Pay (%)": sayi_temizle(cells[2].text),
-                            "Bu Sene (Ton)": sayi_temizle(cells[3].text),
-                            "Bu Sene Pay (%)": sayi_temizle(cells[4].text),
-                            "Değişim (%)": sayi_temizle(cells[5].text)
-                        })
-                    except: continue
-                
-                if len(data) > 0: return pd.DataFrame(data)
-
         # --- TİP 2: DAĞITICI BAZLI DETAY (Tablo 3.6) ---
-        # Bu tabloda "LİSANS" ve şirket isimleri (AYGAZ vb.) olur.
-        elif table_type == 2:
+        if table_type == 2:
             if "LİSANS" in text_signature and ("OTOGAZ" in text_signature or "TÜPLÜ" in text_signature):
                 # AYGAZ kontrolü (Tablonun doğru tablo olduğundan emin olmak için)
                 has_aygaz = False
                 if "AYGAZ" in text_signature: has_aygaz = True
-                else:
-                    for r in table.rows[:15]: 
-                        if len(r.cells) > 0 and "AYGAZ" in r.cells[0].text.upper():
-                            has_aygaz = True
-                            break
                 
                 if not has_aygaz: continue
 
                 data = []
-                # Tablo 3.6 Yapısı (Resme göre):
+                # Tablo 3.6 Yapısı (Genelde):
                 # [0] Şirket, [1] TüplüTon, [2] TüplüPay, [3] DökmeTon, [4] DökmePay, [5] OtogazTon, [6] OtogazPay, [7] ToplamTon, [8] ToplamPay
                 for row in table.rows:
                     cells = row.cells
@@ -991,7 +954,7 @@ else:
                     else: st.error("İl verileri eksik.")
 
         # =================================================================================================
-        # 2. SENARYO: KÜMÜLATİF RAPOR (DOĞRUDAN DOCX OKUMA VE KIYASLAMA)
+        # 2. SENARYO: KÜMÜLATİF RAPOR (REVİZE EDİLEN KISIM)
         # =================================================================================================
         else:
             if df_turkiye.empty:
@@ -1000,80 +963,71 @@ else:
                 st.sidebar.markdown("### Kümülatif Filtreler")
                 secilen_segment_cum = st.sidebar.selectbox("Segment Seçiniz", ["Tüm Ürünler (Detaylı Tablo)", "Otogaz", "Tüplü", "Dökme"])
                 
-                # --- 1. ADIM: EN GÜNCEL DOSYAYI VE BİR ÖNCEKİ YILIN DOSYASINI BUL ---
-                files = sorted([f for f in os.listdir(DOSYA_KLASORU) if f.endswith('.docx') or f.endswith('.doc')])
+                # Dosya isimleri sabitlendi
+                file_curr = 'kumkasim25.docx'
+                file_prev = 'kumkasim24.docx'
                 
-                # En güncel tarihi bul
-                dates = [dosya_isminden_tarih(f) for f in files if dosya_isminden_tarih(f) is not None]
-                if not dates:
-                    st.error("Klasörde geçerli rapor dosyası yok.")
-                    st.stop()
-                    
-                max_date = max(dates)
-                curr_year = max_date.year
-                prev_year = curr_year - 1
+                curr_year = 2025
+                prev_year = 2024
                 
-                file_curr = None
-                file_prev = None
-                
-                # Dosyaları eşleştir (Örn: Kasim25.docx ve Kasim24.docx)
-                for f in files:
-                    d = dosya_isminden_tarih(f)
-                    if d == max_date:
-                        file_curr = f
-                    elif d is not None and d.month == max_date.month and d.year == prev_year:
-                        file_prev = f
-                
-                # --- EKRAN BAŞLIĞI ---
-                ay_ismi = TR_AYLAR.get(max_date.month, '')
-                st.header(f"📈 Kümülatif Rapor: Ocak - {ay_ismi} {curr_year}")
-                st.caption(f"Veri Kaynağı: **{file_curr}** (ve karşılaştırma için **{file_prev if file_prev else 'BULUNAMADI'}**)")
+                st.header(f"📈 Kümülatif Rapor: Ocak - Kasım {curr_year}")
+                st.caption(f"Veri Kaynağı: **{file_curr}** (ve karşılaştırma için **{file_prev}**)")
                 st.markdown("---")
 
-                if file_curr:
-                    path_curr = os.path.join(DOSYA_KLASORU, file_curr)
-                    doc_curr = Document(path_curr)
-                    
-                    # --- TABLO 1: GENEL KARŞILAŞTIRMA (Tablo 3.4) ---
-                    # Bu tablo zaten güncel dosyanın içinde hazır var (2024 vs 2025)
-                    st.subheader(f"1. Ürün Türüne Göre LPG Satışlarının Ocak-{ay_ismi} Dönemi Karşılaştırması")
-                    
-                    # Type 1 = Tablo 3.4 (Genel)
-                    df_gen = extract_table_by_content_final(doc_curr, 1) 
-                    
-                    if not df_gen.empty:
-                        st.dataframe(df_gen.style.format({
-                            col: "{:,.2f}" for col in df_gen.columns if "Ton" in col or "Pay" in col or "Değişim" in col
-                        }).map(highlight_val, subset=['Değişim (%)']), use_container_width=True)
-                    else:
-                        st.warning("Genel karşılaştırma tablosu (Tablo 3.4) okunamadı.")
-                    
-                    st.markdown("---")
+                # --- 1. TABLO 3.4 (HARDCODED / ELLE GİRİLMİŞ VERİ) ---
+                st.subheader("1. Ürün Türüne Göre LPG Satışlarının Ocak-Kasım Dönemi Karşılaştırması")
+                
+                # Resimdeki verileri birebir buraya işliyoruz
+                data_tablo_3_4 = {
+                    "Ürün Türü": ["TÜPLÜ", "DÖKME*", "OTOGAZ", "Genel Toplam"],
+                    "Ocak-Kasım 2024 Satış(ton)": [525090.35, 108988.98, 3184880.14, 3818959.48],
+                    "Ocak-Kasım 2024 Pay(%)": [13.75, 2.85, 83.40, 100.00],
+                    "Ocak-Kasım 2025 Satış(ton)": [498694.97, 106380.90, 3019481.23, 3624557.10],
+                    "Ocak-Kasım 2025 Pay(%)": [13.76, 2.94, 83.31, 100.00],
+                    "Değişim (%)": [-5.03, -2.39, -5.19, -5.09]
+                }
+                
+                df_manual = pd.DataFrame(data_tablo_3_4)
+                
+                # Gösterim Formatı
+                st.dataframe(df_manual.style.format({
+                    "Ocak-Kasım 2024 Satış(ton)": "{:,.2f}",
+                    "Ocak-Kasım 2025 Satış(ton)": "{:,.2f}",
+                    "Ocak-Kasım 2024 Pay(%)": "{:.2f}",
+                    "Ocak-Kasım 2025 Pay(%)": "{:.2f}",
+                    "Değişim (%)": "{:.2f}"
+                }).map(highlight_val, subset=['Değişim (%)']), use_container_width=True)
+                
+                st.markdown("---")
 
-                    # --- TABLO 2: DAĞITICI BAZLI DETAY (Tablo 3.6 Kıyaslaması) ---
-                    st.subheader(f"2. Dağıtıcı Bazlı Pazar Payları ({secilen_segment_cum})")
-                    
-                    # Güncel veriyi oku (Type 2 = Tablo 3.6)
-                    df_dist_curr = extract_table_by_content_final(doc_curr, 2)
-                    
-                    if secilen_segment_cum == "Tüm Ürünler (Detaylı Tablo)":
-                        # Sadece güncel yılın geniş tablosunu göster
-                        if not df_dist_curr.empty:
-                            df_dist_curr = df_dist_curr.sort_values('Toplam Pay (%)', ascending=False).reset_index(drop=True)
-                            df_dist_curr.index += 1
-                            st.dataframe(df_dist_curr.style.format({
-                                col: "{:,.2f}" for col in df_dist_curr.columns if "Ton" in col or "Pay" in col
-                            }), use_container_width=True)
+                # --- 2. TABLO 3.6 (DOSYALARDAN OKUMA VE KIYASLAMA) ---
+                st.subheader(f"2. Dağıtıcı Bazlı Pazar Payları ({secilen_segment_cum})")
+                
+                path_curr = os.path.join(DOSYA_KLASORU, file_curr)
+                path_prev = os.path.join(DOSYA_KLASORU, file_prev)
+                
+                if os.path.exists(path_curr) and os.path.exists(path_prev):
+                    try:
+                        doc_curr = Document(path_curr)
+                        doc_prev = Document(path_prev)
+                        
+                        # Type 2 = Tablo 3.6
+                        df_dist_curr = extract_table_by_content_final(doc_curr, 2)
+                        df_dist_prev = extract_table_by_content_final(doc_prev, 2)
+                        
+                        if secilen_segment_cum == "Tüm Ürünler (Detaylı Tablo)":
+                             # Sadece güncel yılın geniş tablosunu göster
+                            if not df_dist_curr.empty:
+                                df_dist_curr = df_dist_curr.sort_values('Toplam Pay (%)', ascending=False).reset_index(drop=True)
+                                df_dist_curr.index += 1
+                                st.dataframe(df_dist_curr.style.format({
+                                    col: "{:,.2f}" for col in df_dist_curr.columns if "Ton" in col or "Pay" in col
+                                }), use_container_width=True)
+                            else:
+                                st.warning("Güncel dağıtıcı verisi okunamadı.")
+                        
                         else:
-                            st.warning("Dağıtıcı verisi okunamadı.")
-                    
-                    else:
-                        # KIYASLAMA MODU (Otogaz, Tüplü vs.)
-                        if file_prev:
-                            path_prev = os.path.join(DOSYA_KLASORU, file_prev)
-                            doc_prev = Document(path_prev)
-                            df_dist_prev = extract_table_by_content_final(doc_prev, 2)
-                            
+                            # KIYASLAMA MODU
                             if not df_dist_curr.empty and not df_dist_prev.empty:
                                 # Sütun Seçimi
                                 if secilen_segment_cum == "Otogaz":
@@ -1115,25 +1069,10 @@ else:
                                     c_pay_curr: "{:.2f}", c_pay_prev: "{:.2f}",
                                     'Fark Ton': "{:+,.2f}", 'Fark Pay': "{:+.2f}"
                                 }).map(highlight_val, subset=['Fark Ton', 'Fark Pay']), use_container_width=True)
-                                
                             else:
-                                st.warning("Veri tablolarından biri okunamadığı için karşılaştırma yapılamadı.")
-                        else:
-                            st.warning(f"⚠️ **{prev_year} yılına ait dosya bulunamadığı için karşılaştırma yapılamıyor.** Sadece bu yılın verisi gösteriliyor.")
-                            if not df_dist_curr.empty:
-                                if secilen_segment_cum == "Otogaz":
-                                    col_t = 'Otogaz Ton'
-                                    col_p = 'Otogaz Pay (%)'
-                                elif secilen_segment_cum == "Tüplü":
-                                    col_t = 'Tüplü Ton'
-                                    col_p = 'Tüplü Pay (%)'
-                                else:
-                                    col_t = 'Dökme Ton'
-                                    col_p = 'Dökme Pay (%)'
-                                
-                                df_tek = df_dist_curr[['Şirket', col_t, col_p]].sort_values(col_t, ascending=False).reset_index(drop=True)
-                                df_tek.index += 1
-                                st.dataframe(df_tek.style.format({col_t: "{:,.2f}", col_p: "{:.2f}"}), use_container_width=True)
+                                st.warning("Tablo verileri okunamadı.")
 
+                    except Exception as e:
+                        st.error(f"Dosya okuma hatası: {e}")
                 else:
-                    st.error("Güncel dosya işlenirken hata oluştu.")
+                    st.error(f"Gerekli dosyalar ({file_curr} veya {file_prev}) klasörde bulunamadı.")
