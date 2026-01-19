@@ -4,12 +4,11 @@ import os
 import gc
 import psutil
 from docx import Document
-from docx.document import Document as _Document
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
 from docx.table import _Cell, Table
 from docx.text.paragraph import Paragraph
-from thefuzz import process, fuzz
+from thefuzz import fuzz
 import plotly.express as px
 import plotly.graph_objects as go
 import re
@@ -568,11 +567,12 @@ def extract_table_by_content_final(doc, table_type):
     table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay - Tek Yıl)
     """
     for table in doc.tables:
-        # Tablonun ilk satırlarını birleştirip imza arayalım
+        # Tablonun ilk 3 satırındaki tüm metinleri alıp başlık analizi yapalım
         text_signature = ""
         try:
             # İlk 3 satırdaki metinleri alalım (Başlıklar genelde buradadır)
-            for row in table.rows[:3]:
+            rows_to_check = table.rows[:3] if len(table.rows) > 3 else table.rows
+            for row in rows_to_check:
                 for cell in row.cells:
                     text_signature += cell.text.upper().strip() + " "
         except: continue
@@ -610,7 +610,16 @@ def extract_table_by_content_final(doc, table_type):
         # --- TİP 2: DAĞITICI BAZLI DETAY (Tablo 3.6) ---
         # İmza: "LİSANS" ve "OTOGAZ" ve "TÜPLÜ" kelimeleri geçer
         elif table_type == 2:
-            if "LİSANS" in text_signature and "OTOGAZ" in text_signature and "TÜPLÜ" in text_signature:
+            if "LİSANS" in text_signature and "OTOGAZ" in text_signature:
+                # AYGAZ kontrolü de ekleyelim ki kesinleşsin
+                if "AYGAZ" not in text_signature: # Aygaz yoksa satırlara bak
+                    has_aygaz = False
+                    for r in table.rows:
+                        if "AYGAZ" in r.cells[0].text.upper():
+                            has_aygaz = True
+                            break
+                    if not has_aygaz: continue
+
                 data = []
                 for i, row in enumerate(table.rows):
                     cells = row.cells
@@ -638,7 +647,7 @@ def extract_table_by_content_final(doc, table_type):
                         })
                     except: continue
                 
-                if len(data) > 5: # En az 5 veri varsa doğrudur
+                if len(data) > 3: # En az 3 veri varsa doğrudur
                     return pd.DataFrame(data)
             
     return pd.DataFrame()
@@ -937,6 +946,7 @@ else:
                                 forecast_data.append({
                                     'Tarih': format_tarih_tr(next_date),
                                     'Pazar Tahmin (Ton)': forecast_val,
+                                    'Likitgaz Tahmin (Ton)': forecast_val,
                                     'Likitgaz Tahmin (Ton)': likit_forecast
                                 })
                                 
@@ -1105,7 +1115,7 @@ else:
                                 }).map(highlight_val, subset=['Fark Ton', 'Fark Pay']), use_container_width=True)
                                 
                             else:
-                                st.warning("Tablo verileri tam okunamadı. Word dosyasındaki tablo formatı farklı olabilir.")
+                                st.warning("Veri tablolarından biri okunamadığı için karşılaştırma yapılamadı.")
                         else:
                             st.warning(f"⚠️ **{prev_year} yılına ait dosya bulunamadığı için karşılaştırma yapılamıyor.** Sadece bu yılın verisi gösteriliyor.")
                             if not df_dist_curr.empty:
