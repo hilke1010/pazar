@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import re
 from dateutil.relativedelta import relativedelta
 import datetime
-import numpy as np # Hesaplamalar için eklendi
+import numpy as np # Hesaplamalar için
 
 # --- GÜVENLİ IMPORT ---
 try:
@@ -148,6 +148,12 @@ def sehir_ismi_duzelt(sehir):
     if not sehir: return ""
     return sehir.replace('İ', 'i').replace('I', 'ı').title()
 
+# --- TABLO RENKLENDİRME İÇİN YENİ YARDIMCI FONKSİYON ---
+def highlight_val(val):
+    color = 'green' if val > 0 else 'red' if val < 0 else 'black'
+    weight = 'bold'
+    return f'color: {color}; font-weight: {weight}'
+
 @st.cache_data
 def dolar_verisi_getir(baslangic_tarihi):
     if not DOLAR_MODULU_VAR:
@@ -260,7 +266,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     sirket_raporu = []
     rakip_raporu = []
 
-    # 1. ŞEHİR PAZAR BÜYÜKLÜĞÜ ANALİZİ
     try:
         if not df_sehir_resmi.empty:
             ton_simdi = df_sehir_resmi[df_sehir_resmi['Tarih'] == son_tarih][col_ton_il].sum()
@@ -290,7 +295,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
         pazar_raporu.append("Pazar verisi hatası.")
     pazar_raporu.append("---")
 
-    # 2. DETAYLI ŞİRKET ANALİZİ
     sirket_raporu.append(f"### 📊 {odak_sirket} Performans Detayı")
     
     df_odak = df_sirket[(df_sirket['Şirket'] == odak_sirket) & (df_sirket['Şehir'] == sehir)].sort_values('Tarih')
@@ -362,7 +366,6 @@ def stratejik_analiz_raporu(df_sirket, df_iller, sehir, segment, odak_sirket):
     else:
         sirket_raporu.append("Şirket verisi bulunamadı.")
 
-    # 3. DETAYLI RAKİP TREND ANALİZİ
     rakip_raporu.append(f"### 📡 Rakip Trend Dedektörü ({sehir})")
     df_sehir_sirket = df_sirket[df_sirket['Şehir'] == sehir]
     df_sehir_sirket = df_sehir_sirket[df_sehir_sirket['Tarih'] <= son_tarih]
@@ -470,7 +473,6 @@ def verileri_oku():
                                     tum_veri_iller.append({'Tarih': tarih, 'Şehir': il_duzgun, 'Tüplü Ton': t_ton, 'Dökme Ton': d_ton, 'Otogaz Ton': o_ton})
                             except: continue
                     except: pass
-                # Burası hem Tablo 3.5 (TÜRKİYE) hem Tablo 3.7 (LİSANS) gibi tabloları yakalar
                 elif ("3.7" in son_baslik or "3.5" in son_baslik or ("LİSANS" in son_baslik.upper() and "KARŞILAŞTIRMA" in son_baslik.upper()) or ("DAĞITICI" in son_baslik.upper() and "TÜRÜNE GÖRE" in son_baslik.upper())):
                     try:
                         mevcut_sirket = None
@@ -481,8 +483,6 @@ def verileri_oku():
                             if ham_sirket and "LİSANS" not in ham_sirket.upper() and "TOPLAM" not in ham_sirket.upper(): mevcut_sirket = ham_sirket
                             if not mevcut_sirket: continue 
                             tur = cells[1].text.strip().lower()
-                            # Bazı tablolarda 'Tüplü', 'Dökme' sütunlarda yazmaz, satırda yazar.
-                            # Genel yapı: Şirket | Tür | ... | Ton
                             if any(x in tur for x in ["otogaz","dökme","tüplü"]):
                                 std_isim = sirket_ismi_standartlastir(mevcut_sirket, sirket_listesi)
                                 sirket_listesi.add(std_isim)
@@ -517,11 +517,10 @@ def verileri_oku():
                                 except: continue
                     except: pass
     
-    gc.collect() # Çöp toplayıcı
+    gc.collect() 
     
     df_sirket = pd.DataFrame(tum_veri_sirket)
     
-    # --- Mükerrer Verileri Topla ---
     if not df_sirket.empty:
         df_sirket = df_sirket.groupby(['Tarih', 'Şehir', 'Şirket'], as_index=False)[
             ['Tüplü Ton', 'Tüplü Pay', 'Dökme Ton', 'Dökme Pay', 'Otogaz Ton', 'Otogaz Pay']
@@ -530,31 +529,23 @@ def verileri_oku():
     df_iller = pd.DataFrame(tum_veri_iller)
     df_turkiye = pd.DataFrame(tum_veri_turkiye)
     
-    # --- YENİ EKLENEN KISIM: TÜRKİYE GENELİNİ ŞEHİR GİBİ EKLEME ---
     if tum_veri_turkiye_sirket:
         df_ts = pd.DataFrame(tum_veri_turkiye_sirket)
-        # Önce topla (tür bazlı satırları birleştir)
         df_turkiye_sirket = df_ts.groupby(['Tarih', 'Şirket'], as_index=False)[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum()
         
-        # Pazar Paylarını Hesapla (Tarih bazında toplam alıp oranla)
         tr_toplamlar = df_turkiye_sirket.groupby('Tarih')[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].transform('sum')
         
-        # Sıfıra bölünme hatasını engellemek için numpy kullanabiliriz veya basit kontrol
         df_turkiye_sirket['Tüplü Pay'] = df_turkiye_sirket['Tüplü Ton'] / tr_toplamlar['Tüplü Ton'].replace(0, 1) * 100
         df_turkiye_sirket['Dökme Pay'] = df_turkiye_sirket['Dökme Ton'] / tr_toplamlar['Dökme Ton'].replace(0, 1) * 100
         df_turkiye_sirket['Otogaz Pay'] = df_turkiye_sirket['Otogaz Ton'] / tr_toplamlar['Otogaz Ton'].replace(0, 1) * 100
         
-        # Şehir adını "TÜRKİYE GENELİ" olarak ata
         df_turkiye_sirket['Şehir'] = "TÜRKİYE GENELİ"
         
-        # Sütun sırasını df_sirket ile aynı yap
         cols_order = ['Tarih', 'Şehir', 'Şirket', 'Tüplü Ton', 'Tüplü Pay', 'Dökme Ton', 'Dökme Pay', 'Otogaz Ton', 'Otogaz Pay']
         df_turkiye_entegre = df_turkiye_sirket[cols_order]
         
-        # Ana tabloya ekle
         df_sirket = pd.concat([df_sirket, df_turkiye_entegre], ignore_index=True)
         
-        # Ayrıca df_iller tablosuna da "TÜRKİYE GENELİ" satırı ekleyelim ki Stratejik Rapor (Tab 5) çalışsın
         if not df_turkiye.empty:
             df_turkiye_row = df_turkiye.copy()
             df_turkiye_row['Şehir'] = "TÜRKİYE GENELİ"
@@ -562,7 +553,6 @@ def verileri_oku():
 
     else: 
         df_turkiye_sirket = pd.DataFrame(columns=['Tarih', 'Şirket', 'Tüplü Ton', 'Dökme Ton', 'Otogaz Ton'])
-    # -------------------------------------------------------------
     
     for df in [df_sirket, df_iller, df_turkiye, df_turkiye_sirket]:
         if not df.empty:
@@ -617,16 +607,13 @@ else:
     else:
         st.sidebar.header("⚙️ Parametreler")
         
-        # --- ŞEHİR SEÇİMİ GÜNCELLEMESİ ---
         sehirler = sorted(df_sirket['Şehir'].unique())
-        # TÜRKİYE GENELİ en başa gelsin
         if "TÜRKİYE GENELİ" in sehirler:
             sehirler.remove("TÜRKİYE GENELİ")
             sehirler.insert(0, "TÜRKİYE GENELİ")
             
         idx_ank = sehirler.index('Ankara') if 'Ankara' in sehirler and "TÜRKİYE GENELİ" not in sehirler else 0
-        secilen_sehir = st.sidebar.selectbox("Şehir / Bölge", sehirler, index=0) # Index 0 yaparak Türkiye'yi default yapıyoruz
-        # ---------------------------------
+        secilen_sehir = st.sidebar.selectbox("Şehir / Bölge", sehirler, index=0)
         
         segmentler = ['Otogaz', 'Tüplü', 'Dökme']
         secilen_segment = st.sidebar.selectbox("Segment", segmentler)
@@ -691,10 +678,6 @@ else:
                 st.markdown("---")
                 st.subheader(f"📋 Dönemsel Sıralama ve Yıllık Karşılaştırma ({secilen_sehir} - {secilen_segment})")
                 
-                # --- İSTEDİĞİN ÖZELLİK BURADA DEVREYE GİRİYOR ---
-                # Türkiye Geneli seçilince zaten df_sehir_sirket'in içinde sadece şirketler var.
-                # Kod otomatik olarak şirketleri sıralayacak (Resim 3 gibi).
-                
                 donemler = df_sehir_sirket.sort_values('Tarih', ascending=False)['Dönem'].unique()
                 if len(donemler) > 0:
                     secilen_donem = st.selectbox("Dönem Seç:", donemler)
@@ -711,13 +694,13 @@ else:
                     df_final.rename(columns={col_ton: f"Ton ({secilen_donem})", col_pay: f"Pay ({secilen_donem})", col_ton + '_prev': col_ton_prev_name, col_pay + '_prev': col_pay_prev_name}, inplace=True)
                     df_final.fillna(0, inplace=True)
                     
-                    # Ton farkı ve Pay farkı hesapla (İsteğe bağlı, tabloda görünmesi için)
                     df_final[f"Fark Ton"] = df_final[f"Ton ({secilen_donem})"] - df_final[col_ton_prev_name]
                     df_final[f"Fark Pay"] = df_final[f"Pay ({secilen_donem})"] - df_final[col_pay_prev_name]
 
                     df_final = df_final.sort_values(f"Pay ({secilen_donem})", ascending=False).reset_index(drop=True)
                     df_final.index += 1
                     
+                    # --- TABLO GÖSTERİMİ VE RENKLENDİRME ---
                     st.dataframe(df_final.style.format({
                         f"Ton ({secilen_donem})": "{:,.2f}", 
                         f"Pay ({secilen_donem})": "{:.2f}%", 
@@ -725,7 +708,8 @@ else:
                         col_pay_prev_name: "{:.2f}%",
                         "Fark Ton": "{:+,.2f}",
                         "Fark Pay": "{:+.2f}"
-                    }), use_container_width=True)
+                    }).map(highlight_val, subset=['Fark Ton', 'Fark Pay']), use_container_width=True)
+                    # ----------------------------------------
                 else:
                     st.warning("Bu seçim için veri bulunamadı.")
 
@@ -777,7 +761,18 @@ else:
                         df_diff = df_diff[df_diff['Fark'] != 0].sort_values('Fark', ascending=True)
                         df_diff['Renk'] = df_diff['Fark'].apply(lambda x: 'Kazanan' if x > 0 else 'Kaybeden')
                         color_map_w = {'Kazanan': '#2ECC71', 'Kaybeden': '#E74C3C'}
+                        
                         fig_diff = px.bar(df_diff, x='Fark', y='Şirket', orientation='h', color='Renk', color_discrete_map=color_map_w, title="Pazar Payı Değişimi (Puan)")
+                        
+                        # --- GRAFİK İSİM VE BOYUT AYARI ---
+                        # İsimlerin kesilmemesi için automargin ve dinamik yükseklik
+                        fig_diff.update_layout(
+                            yaxis=dict(automargin=True),
+                            height=max(500, len(df_diff)*35),
+                            margin=dict(l=20) # Ekstra sol boşluk bırak
+                        )
+                        # ----------------------------------
+                        
                         st.plotly_chart(fig_diff, use_container_width=True)
                     else: st.warning("Yıllık kıyaslama için veri eksik.")
                     
@@ -796,8 +791,6 @@ else:
                             *   🟢 **< 1.500 (Düşük Yoğunluk):** **Rekabetçi Pazar.** Pazarda çok sayıda oyuncu var, hiçbir firma tek başına hakim değil. Pazara giriş kolaydır.
                             *   🟡 **1.500 - 2.500 (Orta Yoğunluk):** **Oligopol Eğilimi.** Pazar, birkaç büyük şirketin kontrolüne girmeye başlamış. Rekabet zorlaşıyor.
                             *   🔴 **> 2.500 (Yüksek Yoğunluk):** **Tekelleşmiş Pazar.** Pazarın hakimi 1 veya 2 şirkettir. Yeni oyuncuların barınması veya pazar payı çalması çok zordur.
-                            
-                            > **Stratejik Yorum:** HHI puanı arttıkça, o şehirdeki rekabet azalır ve büyük oyuncuların pazar gücü artar.
                             """)
                 else: st.warning("Veri yok.")
 
@@ -869,7 +862,6 @@ else:
                         > **ℹ️ Nasıl Hesaplandı?**
                         > Bu tahminler, geçmiş verilerin istatistiksel analizine dayanır.
                         > **Formül:** %60 Mevsimsellik (Geçen yılın aynı ayı) + %40 Trend (Son 3 ayın ortalaması).
-                        > *Bu sayede hem kış/yaz döngüsü hem de şirketin son dönemdeki büyüme/küçülme ivmesi hesaba katılır.*
                         """)
                     else: st.warning("Yetersiz veri.")
 
