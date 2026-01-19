@@ -564,71 +564,81 @@ def verileri_oku():
 # --- GÜNCELLENMİŞ TABLO TARAMA (DAĞITICI BAZLI KISIM İÇİN) ---
 def extract_table_by_content_final(doc, table_type):
     """
-    table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay)
+    Word dosyasındaki tabloları tarar.
+    Başlık kontrolü yapmadan, satırın yapısına (Metin + Sayı + Sayı...) bakarak veriyi çeker.
     """
     for table in doc.tables:
-        text_signature = ""
+        # Tablo 3.6 genelde geniş bir tablodur (En az 7-8 sütun olur)
+        # Sütun sayısı çok azsa bu tablo o değildir, geç.
         try:
-            # Sadece izole dosya olduğu için tüm satırlara bakabiliriz, ama yine de baştan kontrol edelim
-            rows_to_check = table.rows[:20] if len(table.rows) > 20 else table.rows
-            for row in rows_to_check:
-                for cell in row.cells:
-                    text_signature += cell.text.upper().strip() + " "
-        except: continue
+            col_count = len(table.columns)
+            if col_count < 5: continue
+        except: 
+            # Bazen sütun sayısı okunamayabilir, satırdan kontrol edelim
+            if len(table.rows) > 0 and len(table.rows[0].cells) < 5: continue
 
-        # --- TİP 2: DAĞITICI BAZLI DETAY (Tablo 3.6) ---
-        if table_type == 2:
-            # İzole dosya olduğu için şartları biraz gevşetiyoruz ama "AYGAZ" veya "TON/PAY" yapısını arıyoruz.
-            # Lisans başlığı olmayabilir (kopyala yapıştır yapılmış olabilir), bu yüzden sütun başlıklarına da bakıyoruz.
+        data = []
+        
+        for row in table.rows:
+            cells = row.cells
+            # Satırda yeterli hücre yoksa geç
+            if len(cells) < 7: continue
             
-            is_correct_table = False
+            # İlk hücre Şirket Adı olmalı (Boş olmamalı)
+            c0_text = cells[0].text.strip()
+            if not c0_text: continue
             
-            # 1. Kriter: AYGAZ var mı?
-            if "AYGAZ" in text_signature:
-                is_correct_table = True
-            # 2. Kriter: Eğer AYGAZ yoksa bile (belki altlarda), Başlıklarda PAY ve TON var mı?
-            elif "PAY" in text_signature and "TON" in text_signature and ("TÜPLÜ" in text_signature or "OTOGAZ" in text_signature):
-                is_correct_table = True
-                
-            if not is_correct_table: continue
+            # Başlık satırlarını elemeye çalışalım
+            if "LİSANS" in c0_text.upper() or "TOPLAM" in c0_text.upper() or "UNVANI" in c0_text.upper():
+                continue
+            
+            # KRİTİK NOKTA: Bu satırın veri satırı olup olmadığını anlamak için
+            # 2. veya 3. sütunun SAYI olup olmadığına bakıyoruz.
+            # Eğer sayıya dönüşebiliyorsa bu bir veri satırıdır.
+            is_data_row = False
+            try:
+                # Örnek: Tüplü Pay veya Dökme Ton hücresini dene
+                test_val = cells[2].text.strip().replace('.', '').replace(',', '.')
+                if test_val == "" or test_val == "-": 
+                    test_val = "0"
+                float(test_val) # Hata vermezse sayıdır
+                is_data_row = True
+            except:
+                is_data_row = False
+            
+            if not is_data_row: continue
 
-            data = []
-            # Tablo 3.6 Yapısı (Genelde):
-            # [0] Şirket, [1] TüplüTon, [2] TüplüPay, [3] DökmeTon, [4] DökmePay, [5] OtogazTon, [6] OtogazPay, [7] ToplamTon, [8] ToplamPay
-            for row in table.rows:
-                cells = row.cells
-                # En az 9 hücre olmalı
-                if len(cells) < 9: continue
+            # Buraya geldiyse bu satır veridir, çekelim
+            try:
+                # Verileri temizleyerek alalım
+                vals = []
+                for i in range(1, len(cells)):
+                    vals.append(sayi_temizle(cells[i].text))
                 
-                comp = cells[0].text.strip()
-                if "LİSANS" in comp.upper() or "UNVANI" in comp.upper(): continue
-                if not comp or "TOPLAM" in comp.upper(): continue
-                
-                # Sayı kontrolü (Veri satırı mı?)
-                try:
-                    # En az bir tane sayı olmalı ki veri satırı olsun
-                    if not any(c.text.strip().replace('.','').isdigit() for c in cells[1:4]):
-                        continue
-                except: continue
+                # Listeyi 8 elemana tamamla (hata vermemesi için)
+                while len(vals) < 8: vals.append(0.0)
 
-                clean_name = sirket_ismi_standartlastir(comp, [])
+                clean_name = sirket_ismi_standartlastir(c0_text, [])
                 
-                try:
-                    data.append({
-                        "Şirket": clean_name,
-                        "Tüplü Ton": sayi_temizle(cells[1].text),
-                        "Tüplü Pay (%)": sayi_temizle(cells[2].text),
-                        "Dökme Ton": sayi_temizle(cells[3].text),
-                        "Dökme Pay (%)": sayi_temizle(cells[4].text),
-                        "Otogaz Ton": sayi_temizle(cells[5].text),
-                        "Otogaz Pay (%)": sayi_temizle(cells[6].text),
-                        "Toplam Ton": sayi_temizle(cells[7].text),
-                        "Toplam Pay (%)": sayi_temizle(cells[8].text)
-                    })
-                except: continue
-            
-            if len(data) > 3: return pd.DataFrame(data)
-            
+                # Tablo yapısına göre eşleştirme
+                # [0]TüplüTon, [1]TüplüPay, [2]DökmeTon, [3]DökmePay, [4]OtogazTon, [5]OtogazPay...
+                data.append({
+                    "Şirket": clean_name,
+                    "Tüplü Ton": vals[0],
+                    "Tüplü Pay (%)": vals[1],
+                    "Dökme Ton": vals[2],
+                    "Dökme Pay (%)": vals[3],
+                    "Otogaz Ton": vals[4],
+                    "Otogaz Pay (%)": vals[5],
+                    "Toplam Ton": vals[6],
+                    "Toplam Pay (%)": vals[7]
+                })
+            except: continue
+        
+        # Eğer bu tablodan 3'ten fazla şirket yakaladıysak, doğru tabloyu bulduk demektir.
+        if len(data) > 3:
+            return pd.DataFrame(data)
+
     return pd.DataFrame()
 
 # --- ARAYÜZ ---
@@ -1089,3 +1099,4 @@ else:
                         st.error(f"Dosya okuma hatası: {e}")
                 else:
                     st.error(f"⚠️ Gerekli dosyalar: **{file_curr}** ve **{file_prev}** klasörde bulunamadı.")
+
