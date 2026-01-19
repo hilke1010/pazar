@@ -607,7 +607,7 @@ else:
     if df_sirket.empty:
         st.warning("Veri yok.")
     else:
-        # --- ANA MENÜ SEÇİMİ (YENİ ÖZELLİK) ---
+        # --- ANA MENÜ SEÇİMİ ---
         st.sidebar.title("📌 Menü")
         sayfa_secimi = st.sidebar.radio("Rapor Türü Seçiniz:", ["Aylık Analiz (Şehir Bazlı)", "Kümülatif Rapor (Ocak-Güncel)"])
         st.sidebar.markdown("---")
@@ -900,7 +900,7 @@ else:
                     else: st.error("İl verileri eksik.")
 
         # =================================================================================================
-        # 2. SENARYO: KÜMÜLATİF RAPOR (GÜNCELLENMİŞ VERSİYON)
+        # 2. SENARYO: KÜMÜLATİF RAPOR (KONTROLLÜ)
         # =================================================================================================
         else:
             if df_turkiye.empty or df_turkiye_sirket.empty:
@@ -922,14 +922,24 @@ else:
                 d1_prev = pd.Timestamp(prev_year, 1, 1)
                 d2_prev = pd.Timestamp(prev_year, end_month_num, 1)
                 
+                # --- VERİ SAĞLIĞI KONTROLÜ (BU KISMI EKLEDİM) ---
+                df_curr = df_turkiye[(df_turkiye['Tarih'] >= d1_curr) & (df_turkiye['Tarih'] <= d2_curr)]
+                df_prev = df_turkiye[(df_turkiye['Tarih'] >= d1_prev) & (df_turkiye['Tarih'] <= d2_prev)]
+                
+                count_curr = df_curr['Tarih'].nunique()
+                count_prev = df_prev['Tarih'].nunique()
+                
+                if count_curr != count_prev:
+                    st.warning(f"⚠️ **Veri Uyumsuzluğu:** {current_year} yılı için **{count_curr}** aylık veri bulundu, ancak {prev_year} yılı için sadece **{count_prev}** aylık veri bulundu. Bu durum büyüme oranlarını yapay olarak yüksek gösterebilir. Lütfen `raporlar` klasöründe {prev_year} yılına ait eksik dosyaları kontrol ediniz.")
+                else:
+                    st.success(f"✅ Veri Sağlığı: Her iki yıl için de **{count_curr}** aylık veri eksiksiz işlendi.")
+                # ------------------------------------------------
+                
                 st.header(f"📈 Kümülatif Rapor: Ocak - {end_month_name} {current_year}")
                 st.markdown("---")
 
                 # --- BÖLÜM 1: GENEL PAZAR BÜYÜKLÜKLERİ (TABLO 1) ---
                 st.subheader(f"1. Ürün Türüne Göre LPG Satışlarının Ocak-{end_month_name} Dönemi Karşılaştırması")
-                
-                df_curr = df_turkiye[(df_turkiye['Tarih'] >= d1_curr) & (df_turkiye['Tarih'] <= d2_curr)]
-                df_prev = df_turkiye[(df_turkiye['Tarih'] >= d1_prev) & (df_turkiye['Tarih'] <= d2_prev)]
                 
                 def calculate_totals(df):
                     res = {
@@ -1007,7 +1017,7 @@ else:
                 market_total_curr = grp_curr[col_ton].sum()
                 market_total_prev = grp_prev[col_ton].sum()
 
-                # Ana Tabloyu Birleştir (Full Outer Join ki düşenleri/girenleri görelim)
+                # Ana Tabloyu Birleştir
                 df_merged = pd.merge(grp_curr[['Şirket', col_ton]], grp_prev[['Şirket', col_ton]], 
                                      on='Şirket', how='outer', suffixes=('_curr', '_prev')).fillna(0)
                 
