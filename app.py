@@ -613,7 +613,7 @@ else:
         st.sidebar.markdown("---")
         
         # =================================================================================================
-        # 1. SENARYO: AYLIK ANALİZ (ESKİ KODLARIN AYNISI)
+        # 1. SENARYO: AYLIK ANALİZ
         # =================================================================================================
         if sayfa_secimi == "Aylık Analiz (Şehir Bazlı)":
             st.sidebar.header("⚙️ Parametreler")
@@ -900,14 +900,14 @@ else:
                     else: st.error("İl verileri eksik.")
 
         # =================================================================================================
-        # 2. SENARYO: KÜMÜLATİF RAPOR (KONTROLLÜ)
+        # 2. SENARYO: KÜMÜLATİF RAPOR (GÜNCELLENMİŞ VERSİYON)
         # =================================================================================================
         else:
             if df_turkiye.empty or df_turkiye_sirket.empty:
                 st.error("Kümülatif rapor için yeterli Türkiye verisi bulunamadı.")
             else:
                 st.sidebar.markdown("### Kümülatif Filtreler")
-                secilen_segment_cum = st.sidebar.selectbox("Segment Seçiniz", ["Genel Toplam", "Otogaz", "Tüplü", "Dökme"])
+                secilen_segment_cum = st.sidebar.selectbox("Segment Seçiniz", ["Tüm Ürünler (Detaylı Tablo)", "Otogaz", "Tüplü", "Dökme"])
                 
                 # --- OTOMATİK TARİH TESPİTİ ---
                 max_date = df_turkiye['Tarih'].max()
@@ -922,7 +922,7 @@ else:
                 d1_prev = pd.Timestamp(prev_year, 1, 1)
                 d2_prev = pd.Timestamp(prev_year, end_month_num, 1)
                 
-                # --- VERİ SAĞLIĞI KONTROLÜ (BU KISMI EKLEDİM) ---
+                # --- VERİ SAĞLIĞI KONTROLÜ ---
                 df_curr = df_turkiye[(df_turkiye['Tarih'] >= d1_curr) & (df_turkiye['Tarih'] <= d2_curr)]
                 df_prev = df_turkiye[(df_turkiye['Tarih'] >= d1_prev) & (df_turkiye['Tarih'] <= d2_prev)]
                 
@@ -938,7 +938,7 @@ else:
                 st.header(f"📈 Kümülatif Rapor: Ocak - {end_month_name} {current_year}")
                 st.markdown("---")
 
-                # --- BÖLÜM 1: GENEL PAZAR BÜYÜKLÜKLERİ (TABLO 1) ---
+                # --- BÖLÜM 1: GENEL PAZAR BÜYÜKLÜKLERİ (TABLO 1 - TABLO 3.4 BENZERİ) ---
                 st.subheader(f"1. Ürün Türüne Göre LPG Satışlarının Ocak-{end_month_name} Dönemi Karşılaştırması")
                 
                 def calculate_totals(df):
@@ -986,75 +986,101 @@ else:
 
                 st.markdown("---")
                 
-                # --- BÖLÜM 2: SEÇİLEN SEGMENTE GÖRE DAĞITICI SIRALAMASI (TABLO 2) ---
-                st.subheader(f"2. Ocak-{end_month_name} {current_year} Dönemi Dağıtıcı Bazlı Pazar Payları ({secilen_segment_cum})")
-                
-                # İlgili segment sütunlarını belirle
-                segment_cols = []
-                if secilen_segment_cum == "Otogaz":
-                    col_ton = 'Otogaz Ton'
-                elif secilen_segment_cum == "Tüplü":
-                    col_ton = 'Tüplü Ton'
-                elif secilen_segment_cum == "Dökme":
-                    col_ton = 'Dökme Ton'
-                else: # Genel Toplam
-                    col_ton = 'Toplam Ton'
+                # --- BÖLÜM 2: SEÇİLEN SEGMENTE GÖRE DAĞITICI SIRALAMASI ---
+                st.subheader(f"2. Ocak-{end_month_name} {current_year} Dönemi Dağıtıcı Bazlı Pazar Payları")
                 
                 # Şirket Verilerini Filtrele
                 df_s_curr = df_turkiye_sirket[(df_turkiye_sirket['Tarih'] >= d1_curr) & (df_turkiye_sirket['Tarih'] <= d2_curr)]
-                df_s_prev = df_turkiye_sirket[(df_turkiye_sirket['Tarih'] >= d1_prev) & (df_turkiye_sirket['Tarih'] <= d2_prev)]
-
+                
                 # Şirket bazında grupla
-                def group_and_sum(df_in):
-                    grp = df_in.groupby('Şirket')[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum().reset_index()
-                    grp['Toplam Ton'] = grp['Tüplü Ton'] + grp['Dökme Ton'] + grp['Otogaz Ton']
-                    return grp
+                grp_curr = df_s_curr.groupby('Şirket')[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum().reset_index()
+                grp_curr['Toplam Ton'] = grp_curr['Tüplü Ton'] + grp_curr['Dökme Ton'] + grp_curr['Otogaz Ton']
                 
-                grp_curr = group_and_sum(df_s_curr)
-                grp_prev = group_and_sum(df_s_prev)
+                # -------------------------------------------------------------
+                # SEÇENEK A: TÜM ÜRÜNLER (TABLO 3.6 GİBİ GENİŞ GÖRÜNÜM)
+                # -------------------------------------------------------------
+                if secilen_segment_cum == "Tüm Ürünler (Detaylı Tablo)":
+                    # Pazar Toplamları
+                    market_tuplu = grp_curr['Tüplü Ton'].sum()
+                    market_dokme = grp_curr['Dökme Ton'].sum()
+                    market_otogaz = grp_curr['Otogaz Ton'].sum()
+                    market_total = grp_curr['Toplam Ton'].sum()
+                    
+                    # Pay Hesapları (Ürün bazında pazar payı)
+                    grp_curr['Tüplü Pay (%)'] = (grp_curr['Tüplü Ton'] / market_tuplu * 100).fillna(0)
+                    grp_curr['Dökme Pay (%)'] = (grp_curr['Dökme Ton'] / market_dokme * 100).fillna(0)
+                    grp_curr['Otogaz Pay (%)'] = (grp_curr['Otogaz Ton'] / market_otogaz * 100).fillna(0)
+                    grp_curr['Toplam Pay (%)'] = (grp_curr['Toplam Ton'] / market_total * 100).fillna(0)
+                    
+                    # Sıralama
+                    grp_curr = grp_curr.sort_values('Toplam Pay (%)', ascending=False).reset_index(drop=True)
+                    grp_curr.index += 1
+                    
+                    cols_display = [
+                        'Şirket',
+                        'Tüplü Ton', 'Tüplü Pay (%)',
+                        'Dökme Ton', 'Dökme Pay (%)',
+                        'Otogaz Ton', 'Otogaz Pay (%)',
+                        'Toplam Ton', 'Toplam Pay (%)'
+                    ]
+                    
+                    df_display_wide = grp_curr[cols_display]
+                    
+                    format_dict_wide = {col: "{:,.2f}" if "Ton" in col else "{:.2f}" for col in df_display_wide.columns if col != 'Şirket'}
+                    st.dataframe(df_display_wide.style.format(format_dict_wide), use_container_width=True)
 
-                # Segment Toplam Pazar Büyüklüğü (Pay hesabı için)
-                market_total_curr = grp_curr[col_ton].sum()
-                market_total_prev = grp_prev[col_ton].sum()
+                # -------------------------------------------------------------
+                # SEÇENEK B: TEK SEGMENT (KIYASLAMALI DETAY)
+                # -------------------------------------------------------------
+                else:
+                    if secilen_segment_cum == "Otogaz":
+                        col_ton = 'Otogaz Ton'
+                    elif secilen_segment_cum == "Tüplü":
+                        col_ton = 'Tüplü Ton'
+                    elif secilen_segment_cum == "Dökme":
+                        col_ton = 'Dökme Ton'
+                    
+                    # Geçen Sene Verisi (Sadece kıyaslama için gerekli)
+                    df_s_prev = df_turkiye_sirket[(df_turkiye_sirket['Tarih'] >= d1_prev) & (df_turkiye_sirket['Tarih'] <= d2_prev)]
+                    grp_prev = df_s_prev.groupby('Şirket')[['Tüplü Ton', 'Dökme Ton', 'Otogaz Ton']].sum().reset_index()
 
-                # Ana Tabloyu Birleştir
-                df_merged = pd.merge(grp_curr[['Şirket', col_ton]], grp_prev[['Şirket', col_ton]], 
-                                     on='Şirket', how='outer', suffixes=('_curr', '_prev')).fillna(0)
-                
-                # Hesaplamalar
-                col_curr = f"{secilen_segment_cum} Ton ({current_year})"
-                col_prev = f"{secilen_segment_cum} Ton ({prev_year})"
-                col_pay_curr = f"Pazar Payı {current_year} (%)"
-                col_pay_prev = f"Pazar Payı {prev_year} (%)"
-                col_diff_ton = "Fark (Ton)"
-                col_diff_pay = "Fark (Pay)"
+                    # Pazar Toplamları
+                    market_total_curr = grp_curr[col_ton].sum()
+                    market_total_prev = grp_prev[col_ton].sum()
 
-                df_merged[col_curr] = df_merged[f'{col_ton}_curr']
-                df_merged[col_prev] = df_merged[f'{col_ton}_prev']
+                    # Birleştirme
+                    df_merged = pd.merge(grp_curr[['Şirket', col_ton]], grp_prev[['Şirket', col_ton]], 
+                                         on='Şirket', how='outer', suffixes=('_curr', '_prev')).fillna(0)
 
-                # Pazar Payı Hesabı: (Şirket Tonu / Toplam Pazar Tonu) * 100
-                df_merged[col_pay_curr] = (df_merged[col_curr] / market_total_curr * 100) if market_total_curr > 0 else 0
-                df_merged[col_pay_prev] = (df_merged[col_prev] / market_total_prev * 100) if market_total_prev > 0 else 0
-                
-                df_merged[col_diff_ton] = df_merged[col_curr] - df_merged[col_prev]
-                df_merged[col_diff_pay] = df_merged[col_pay_curr] - df_merged[col_pay_prev]
+                    col_curr = f"{secilen_segment_cum} Ton ({current_year})"
+                    col_prev = f"{secilen_segment_cum} Ton ({prev_year})"
+                    col_pay_curr = f"Pay {current_year} (%)"
+                    col_pay_prev = f"Pay {prev_year} (%)"
+                    col_diff_ton = "Fark (Ton)"
+                    col_diff_pay = "Fark (Pay)"
 
-                # Sıralama: Bu seneki tona göre azalan
-                df_merged = df_merged.sort_values(col_curr, ascending=False).reset_index(drop=True)
-                df_merged.index += 1
+                    df_merged[col_curr] = df_merged[f'{col_ton}_curr']
+                    df_merged[col_prev] = df_merged[f'{col_ton}_prev']
 
-                # Gösterilecek Sütunlar
-                final_cols = ['Şirket', col_curr, col_pay_curr, col_prev, col_pay_prev, col_diff_ton, col_diff_pay]
-                df_display_2 = df_merged[final_cols]
+                    df_merged[col_pay_curr] = (df_merged[col_curr] / market_total_curr * 100) if market_total_curr > 0 else 0
+                    df_merged[col_pay_prev] = (df_merged[col_prev] / market_total_prev * 100) if market_total_prev > 0 else 0
+                    
+                    df_merged[col_diff_ton] = df_merged[col_curr] - df_merged[col_prev]
+                    df_merged[col_diff_pay] = df_merged[col_pay_curr] - df_merged[col_pay_prev]
 
-                # Formatlama
-                format_dict_2 = {
-                    col_curr: "{:,.2f}",
-                    col_prev: "{:,.2f}",
-                    col_pay_curr: "{:.2f}",
-                    col_pay_prev: "{:.2f}",
-                    col_diff_ton: "{:+,.2f}",
-                    col_diff_pay: "{:+.2f}"
-                }
+                    df_merged = df_merged.sort_values(col_curr, ascending=False).reset_index(drop=True)
+                    df_merged.index += 1
 
-                st.dataframe(df_display_2.style.format(format_dict_2).map(highlight_val, subset=[col_diff_ton, col_diff_pay]), use_container_width=True)
+                    final_cols = ['Şirket', col_curr, col_pay_curr, col_prev, col_pay_prev, col_diff_ton, col_diff_pay]
+                    df_display_2 = df_merged[final_cols]
+
+                    format_dict_2 = {
+                        col_curr: "{:,.2f}",
+                        col_prev: "{:,.2f}",
+                        col_pay_curr: "{:.2f}",
+                        col_pay_prev: "{:.2f}",
+                        col_diff_ton: "{:+,.2f}",
+                        col_diff_pay: "{:+.2f}"
+                    }
+
+                    st.dataframe(df_display_2.style.format(format_dict_2).map(highlight_val, subset=[col_diff_ton, col_diff_pay]), use_container_width=True)
