@@ -564,14 +564,13 @@ def verileri_oku():
 # --- GÜNCELLENMİŞ TABLO TARAMA (DAĞITICI BAZLI KISIM İÇİN) ---
 def extract_table_by_content_final(doc, table_type):
     """
-    table_type 1: Tablo 3.4 (Bu senaryoda hardcoded kullanıyoruz, bu fonksiyonda pas geçilebilir ama yapı bozulmasın diye tutuyoruz)
     table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay)
     """
     for table in doc.tables:
         text_signature = ""
         try:
-            # İlk satırlardaki başlıkları kontrol et
-            rows_to_check = table.rows[:15] if len(table.rows) > 15 else table.rows
+            # Sadece izole dosya olduğu için tüm satırlara bakabiliriz, ama yine de baştan kontrol edelim
+            rows_to_check = table.rows[:20] if len(table.rows) > 20 else table.rows
             for row in rows_to_check:
                 for cell in row.cells:
                     text_signature += cell.text.upper().strip() + " "
@@ -579,42 +578,56 @@ def extract_table_by_content_final(doc, table_type):
 
         # --- TİP 2: DAĞITICI BAZLI DETAY (Tablo 3.6) ---
         if table_type == 2:
-            if "LİSANS" in text_signature and ("OTOGAZ" in text_signature or "TÜPLÜ" in text_signature):
-                # AYGAZ kontrolü (Tablonun doğru tablo olduğundan emin olmak için)
-                has_aygaz = False
-                if "AYGAZ" in text_signature: has_aygaz = True
+            # İzole dosya olduğu için şartları biraz gevşetiyoruz ama "AYGAZ" veya "TON/PAY" yapısını arıyoruz.
+            # Lisans başlığı olmayabilir (kopyala yapıştır yapılmış olabilir), bu yüzden sütun başlıklarına da bakıyoruz.
+            
+            is_correct_table = False
+            
+            # 1. Kriter: AYGAZ var mı?
+            if "AYGAZ" in text_signature:
+                is_correct_table = True
+            # 2. Kriter: Eğer AYGAZ yoksa bile (belki altlarda), Başlıklarda PAY ve TON var mı?
+            elif "PAY" in text_signature and "TON" in text_signature and ("TÜPLÜ" in text_signature or "OTOGAZ" in text_signature):
+                is_correct_table = True
                 
-                if not has_aygaz: continue
+            if not is_correct_table: continue
 
-                data = []
-                # Tablo 3.6 Yapısı (Genelde):
-                # [0] Şirket, [1] TüplüTon, [2] TüplüPay, [3] DökmeTon, [4] DökmePay, [5] OtogazTon, [6] OtogazPay, [7] ToplamTon, [8] ToplamPay
-                for row in table.rows:
-                    cells = row.cells
-                    # En az 9 hücre olmalı
-                    if len(cells) < 9: continue
-                    
-                    comp = cells[0].text.strip()
-                    if "LİSANS" in comp.upper() or "UNVANI" in comp.upper(): continue
-                    if not comp or "TOPLAM" in comp.upper(): continue
-                    
-                    clean_name = sirket_ismi_standartlastir(comp, [])
-                    
-                    try:
-                        data.append({
-                            "Şirket": clean_name,
-                            "Tüplü Ton": sayi_temizle(cells[1].text),
-                            "Tüplü Pay (%)": sayi_temizle(cells[2].text),
-                            "Dökme Ton": sayi_temizle(cells[3].text),
-                            "Dökme Pay (%)": sayi_temizle(cells[4].text),
-                            "Otogaz Ton": sayi_temizle(cells[5].text),
-                            "Otogaz Pay (%)": sayi_temizle(cells[6].text),
-                            "Toplam Ton": sayi_temizle(cells[7].text),
-                            "Toplam Pay (%)": sayi_temizle(cells[8].text)
-                        })
-                    except: continue
+            data = []
+            # Tablo 3.6 Yapısı (Genelde):
+            # [0] Şirket, [1] TüplüTon, [2] TüplüPay, [3] DökmeTon, [4] DökmePay, [5] OtogazTon, [6] OtogazPay, [7] ToplamTon, [8] ToplamPay
+            for row in table.rows:
+                cells = row.cells
+                # En az 9 hücre olmalı
+                if len(cells) < 9: continue
                 
-                if len(data) > 3: return pd.DataFrame(data)
+                comp = cells[0].text.strip()
+                if "LİSANS" in comp.upper() or "UNVANI" in comp.upper(): continue
+                if not comp or "TOPLAM" in comp.upper(): continue
+                
+                # Sayı kontrolü (Veri satırı mı?)
+                try:
+                    # En az bir tane sayı olmalı ki veri satırı olsun
+                    if not any(c.text.strip().replace('.','').isdigit() for c in cells[1:4]):
+                        continue
+                except: continue
+
+                clean_name = sirket_ismi_standartlastir(comp, [])
+                
+                try:
+                    data.append({
+                        "Şirket": clean_name,
+                        "Tüplü Ton": sayi_temizle(cells[1].text),
+                        "Tüplü Pay (%)": sayi_temizle(cells[2].text),
+                        "Dökme Ton": sayi_temizle(cells[3].text),
+                        "Dökme Pay (%)": sayi_temizle(cells[4].text),
+                        "Otogaz Ton": sayi_temizle(cells[5].text),
+                        "Otogaz Pay (%)": sayi_temizle(cells[6].text),
+                        "Toplam Ton": sayi_temizle(cells[7].text),
+                        "Toplam Pay (%)": sayi_temizle(cells[8].text)
+                    })
+                except: continue
+            
+            if len(data) > 3: return pd.DataFrame(data)
             
     return pd.DataFrame()
 
@@ -954,7 +967,7 @@ else:
                     else: st.error("İl verileri eksik.")
 
         # =================================================================================================
-        # 2. SENARYO: KÜMÜLATİF RAPOR (REVİZE EDİLEN KISIM)
+        # 2. SENARYO: KÜMÜLATİF RAPOR (REVİZE EDİLEN KISIM - SADECE kumkasimXX DOSYALARI)
         # =================================================================================================
         else:
             if df_turkiye.empty:
@@ -963,7 +976,7 @@ else:
                 st.sidebar.markdown("### Kümülatif Filtreler")
                 secilen_segment_cum = st.sidebar.selectbox("Segment Seçiniz", ["Tüm Ürünler (Detaylı Tablo)", "Otogaz", "Tüplü", "Dökme"])
                 
-                # Dosya isimleri sabitlendi
+                # SADECE BU DOSYALARA BAKIYORUZ
                 file_curr = 'kumkasim25.docx'
                 file_prev = 'kumkasim24.docx'
                 
@@ -1000,7 +1013,7 @@ else:
                 
                 st.markdown("---")
 
-                # --- 2. TABLO 3.6 (DOSYALARDAN OKUMA VE KIYASLAMA) ---
+                # --- 2. TABLO 3.6 (SADECE KUMKASIM DOSYALARINDAN OKUMA) ---
                 st.subheader(f"2. Dağıtıcı Bazlı Pazar Payları ({secilen_segment_cum})")
                 
                 path_curr = os.path.join(DOSYA_KLASORU, file_curr)
@@ -1024,7 +1037,7 @@ else:
                                     col: "{:,.2f}" for col in df_dist_curr.columns if "Ton" in col or "Pay" in col
                                 }), use_container_width=True)
                             else:
-                                st.warning("Güncel dağıtıcı verisi okunamadı.")
+                                st.warning("Güncel dağıtıcı verisi okunamadı. (Lütfen Word dosyasında tablo yapısını kontrol edin)")
                         
                         else:
                             # KIYASLAMA MODU
@@ -1070,9 +1083,9 @@ else:
                                     'Fark Ton': "{:+,.2f}", 'Fark Pay': "{:+.2f}"
                                 }).map(highlight_val, subset=['Fark Ton', 'Fark Pay']), use_container_width=True)
                             else:
-                                st.warning("Tablo verileri okunamadı.")
+                                st.warning("Dosyalar bulundu ama içindeki tablo verisi okunamadı. (Sütun yapısı farklı olabilir)")
 
                     except Exception as e:
                         st.error(f"Dosya okuma hatası: {e}")
                 else:
-                    st.error(f"Gerekli dosyalar ({file_curr} veya {file_prev}) klasörde bulunamadı.")
+                    st.error(f"⚠️ Gerekli dosyalar: **{file_curr}** ve **{file_prev}** klasörde bulunamadı.")
