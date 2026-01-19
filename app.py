@@ -561,39 +561,35 @@ def verileri_oku():
             
     return df_sirket, df_iller, df_turkiye, df_turkiye_sirket
 
-# --- YENİ FONKSİYON: "İÇERİK BAZLI" AKILLI TABLO TARAMA (BAŞLIKTAN BAĞIMSIZ) ---
-def extract_table_by_content_aggressive(doc, table_type):
+# --- YENİ FONKSİYON: "İÇERİK BAZLI" AKILLI TABLO TARAMA ---
+def extract_table_by_content_final(doc, table_type):
     """
-    table_type 1: Tablo 3.4 (Genel Karşılaştırma - 2024 vs 2025 gibi)
-    table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay - Tek bir yıl için)
+    table_type 1: Tablo 3.4 (Genel Karşılaştırma - 2024 vs 2025)
+    table_type 2: Tablo 3.6 (Dağıtıcı Bazlı Detay - Tek Yıl)
     """
-    candidates = []
-    
     for table in doc.tables:
-        # Tablonun tüm metnini çekip analiz edelim
-        all_text = ""
+        # Tablonun ilk satırlarını birleştirip imza arayalım
+        text_signature = ""
         try:
-            # İlk 3 satır genellikle başlık olur
-            rows_to_check = table.rows[:4] if len(table.rows) > 4 else table.rows
-            for row in rows_to_check:
+            # İlk 3 satırdaki metinleri alalım (Başlıklar genelde buradadır)
+            for row in table.rows[:3]:
                 for cell in row.cells:
-                    all_text += cell.text.upper() + " "
+                    text_signature += cell.text.upper().strip() + " "
         except: continue
 
-        # --- TİP 1: GENEL KARŞILAŞTIRMA (3.4) ---
+        # --- TİP 1: GENEL KARŞILAŞTIRMA (Tablo 3.4) ---
+        # İmza: "ÜRÜN TÜRÜ" ve "DEĞİŞİM" kelimeleri mutlaka geçer
         if table_type == 1:
-            # Anahtar kelimeler: "ÜRÜN TÜRÜ" ve "DEĞİŞİM" ve genelde yıllar olur (2024, 2025 gibi)
-            if "ÜRÜN TÜRÜ" in all_text and "DEĞİŞİM" in all_text:
+            if "ÜRÜN TÜRÜ" in text_signature and "DEĞİŞİM" in text_signature:
                 data = []
-                # Satır satır oku
                 for i, row in enumerate(table.rows):
                     cells = row.cells
+                    # Genelde 6 sütun olur
                     if len(cells) < 6: continue
                     
-                    # İlk sütun "ÜRÜN TÜRÜ" veya "TÜPLÜ" gibi bir şey olmalı
                     first_cell = cells[0].text.strip()
-                    if "ÜRÜN TÜRÜ" in first_cell.upper(): continue # Başlık satırı
-                    
+                    # Başlık satırını atla
+                    if "ÜRÜN TÜRÜ" in first_cell.upper(): continue
                     if not first_cell: continue
                     
                     tur = "Genel Toplam" if "TOPLAM" in first_cell.upper() else first_cell
@@ -611,18 +607,18 @@ def extract_table_by_content_aggressive(doc, table_type):
                 
                 if len(data) > 0: return pd.DataFrame(data)
 
-        # --- TİP 2: DAĞITICI BAZLI DETAY (3.6) ---
+        # --- TİP 2: DAĞITICI BAZLI DETAY (Tablo 3.6) ---
+        # İmza: "LİSANS" ve "OTOGAZ" ve "TÜPLÜ" kelimeleri geçer
         elif table_type == 2:
-            # Anahtar kelimeler: "LİSANS" ve "OTOGAZ" ve "DÖKME"
-            if "LİSANS" in all_text and "OTOGAZ" in all_text and "TOPLAM" in all_text:
+            if "LİSANS" in text_signature and "OTOGAZ" in text_signature and "TÜPLÜ" in text_signature:
                 data = []
                 for i, row in enumerate(table.rows):
                     cells = row.cells
-                    # Genelde 9 sütun olur (İsim + 2xTüplü + 2xDökme + 2xOtogaz + 2xToplam)
+                    # Genelde 9 sütun olur
                     if len(cells) < 9: continue
                     
                     comp = cells[0].text.strip()
-                    # Başlıkları atla
+                    # Başlık satırlarını ve boşları atla
                     if "LİSANS" in comp.upper() or "UNVANI" in comp.upper(): continue
                     if not comp or "TOPLAM" in comp.upper(): continue
                     
@@ -642,7 +638,7 @@ def extract_table_by_content_aggressive(doc, table_type):
                         })
                     except: continue
                 
-                if len(data) > 5: # En az 5 şirket varsa doğru tablodur
+                if len(data) > 5: # En az 5 veri varsa doğrudur
                     return pd.DataFrame(data)
             
     return pd.DataFrame()
@@ -1009,7 +1005,6 @@ else:
                 file_prev = None
                 
                 # Dosyaları eşleştir (Örn: Kasim25.docx ve Kasim24.docx)
-                # Basit replace yerine tarih kontrolü yapıyoruz
                 for f in files:
                     d = dosya_isminden_tarih(f)
                     if d == max_date:
@@ -1025,13 +1020,14 @@ else:
 
                 if file_curr:
                     path_curr = os.path.join(DOSYA_KLASORU, file_curr)
+                    doc_curr = Document(path_curr)
                     
                     # --- TABLO 1: GENEL KARŞILAŞTIRMA (Tablo 3.4) ---
                     # Bu tablo zaten güncel dosyanın içinde hazır var (2024 vs 2025)
                     st.subheader(f"1. Ürün Türüne Göre LPG Satışlarının Ocak-{ay_ismi} Dönemi Karşılaştırması")
+                    
                     # Buradaki Type 1 = Tablo 3.4
-                    doc_curr = Document(path_curr)
-                    df_gen = extract_table_by_content_aggressive(doc_curr, 1) 
+                    df_gen = extract_table_by_content_final(doc_curr, 1) 
                     
                     if not df_gen.empty:
                         st.dataframe(df_gen.style.format({
@@ -1046,7 +1042,7 @@ else:
                     st.subheader(f"2. Dağıtıcı Bazlı Pazar Payları ({secilen_segment_cum})")
                     
                     # Güncel veriyi oku (Type 2 = Tablo 3.6)
-                    df_dist_curr = extract_table_by_content_aggressive(doc_curr, 2)
+                    df_dist_curr = extract_table_by_content_final(doc_curr, 2)
                     
                     if secilen_segment_cum == "Tüm Ürünler (Detaylı Tablo)":
                         # Sadece güncel yılın geniş tablosunu göster
@@ -1064,7 +1060,7 @@ else:
                         if file_prev:
                             path_prev = os.path.join(DOSYA_KLASORU, file_prev)
                             doc_prev = Document(path_prev)
-                            df_dist_prev = extract_table_by_content_aggressive(doc_prev, 2)
+                            df_dist_prev = extract_table_by_content_final(doc_prev, 2)
                             
                             if not df_dist_curr.empty and not df_dist_prev.empty:
                                 # Sütun Seçimi
@@ -1109,7 +1105,7 @@ else:
                                 }).map(highlight_val, subset=['Fark Ton', 'Fark Pay']), use_container_width=True)
                                 
                             else:
-                                st.warning(f"Tablo verileri tam okunamadı. Güncel dosya: {len(df_dist_curr)} satır, Önceki dosya: {len(df_dist_prev)} satır.")
+                                st.warning("Tablo verileri tam okunamadı. Word dosyasındaki tablo formatı farklı olabilir.")
                         else:
                             st.warning(f"⚠️ **{prev_year} yılına ait dosya bulunamadığı için karşılaştırma yapılamıyor.** Sadece bu yılın verisi gösteriliyor.")
                             if not df_dist_curr.empty:
