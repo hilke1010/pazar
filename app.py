@@ -644,7 +644,7 @@ def extract_table_by_content_final(doc, table_type):
 # --- ARAYÜZ ---
 st.set_page_config(page_title="EPDK Pazar Analizi", layout="wide")
 
-# --- MODERN VE ŞATAFATLI TASARIM (YÜKSEK KONTRAST & NEON CSS) ---
+# --- MODERN VE "OTOGAZ" TEMALI TASARIM (YÜKSEK KONTRAST & NEON CSS) ---
 st.markdown("""
     <style>
     /* Google Font: Outfit (Modern & Geometrik) */
@@ -661,102 +661,141 @@ st.markdown("""
         from { opacity: 0; transform: translate3d(0, 40px, 0); }
         to { opacity: 1; transform: translate3d(0, 0, 0); }
     }
+    
+    @keyframes flame-flicker {
+        0% { text-shadow: 0 0 10px #00C6FF, 0 0 20px #0072ff; }
+        50% { text-shadow: 0 0 20px #00C6FF, 0 0 40px #0072ff; }
+        100% { text-shadow: 0 0 10px #00C6FF, 0 0 20px #0072ff; }
+    }
 
     /* --- GENEL SAYFA --- */
     .stApp {
-        background: linear-gradient(-45deg, #0f172a, #1e1b4b, #312e81, #0f172a);
-        background-size: 400% 400%;
-        animation: gradient-animation 15s ease infinite;
+        background: radial-gradient(circle at 50% 10%, #1e1b4b, #0f172a 60%, #020617 100%);
         font-family: 'Outfit', sans-serif;
         color: #e2e8f0;
     }
 
-    /* --- BAŞLIKLAR --- */
-    h1, h2, h3 {
+    /* --- BAŞLIKLAR (OTOGAZ ALEVİ EFEKTİ) --- */
+    h1, h2, h3, h4 {
         color: white !important;
-        text-shadow: 0 0 10px rgba(0, 198, 255, 0.5);
+        font-weight: 800 !important;
     }
     
     h1 {
-        font-weight: 800 !important;
-        background: -webkit-linear-gradient(left, #FF7E5F, #00C6FF);
+        background: linear-gradient(to right, #00C6FF, #0072ff);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
+        animation: flame-flicker 3s infinite alternate;
     }
 
     /* --- SIDEBAR --- */
     [data-testid="stSidebar"] {
-        background-color: rgba(15, 23, 42, 0.95);
-        border-right: 1px solid rgba(255,255,255,0.05);
+        background-color: #0b1121;
+        border-right: 1px solid rgba(0, 198, 255, 0.1);
     }
     [data-testid="stSidebar"] * {
-        color: #cbd5e1 !important;
+        color: #94a3b8 !important;
+    }
+
+    /* --- TABLOLAR (FIX: BEYAZ GÖRÜNMESİNİ ENGELLEME) --- */
+    .stDataFrame, .stTable {
+        background-color: rgba(15, 23, 42, 0.8) !important;
+        border-radius: 12px;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    /* Tablo başlıkları */
+    thead tr th {
+        background-color: #1e293b !important;
+        color: #00C6FF !important;
+        border-bottom: 2px solid #334155 !important;
+        font-size: 1rem !important;
+    }
+    
+    /* Tablo hücreleri */
+    tbody tr td {
+        background-color: transparent !important;
+        color: #e2e8f0 !important;
+        border-bottom: 1px solid #334155 !important;
+    }
+    
+    /* Tablo satır hover */
+    tbody tr:hover td {
+        background-color: rgba(0, 198, 255, 0.1) !important;
+        color: white !important;
     }
 
     /* --- METRİKLER VE KARTLAR --- */
     div[data-testid="stMetric"] {
-        background: rgba(30, 41, 59, 0.4);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 15px;
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+        border: 1px solid rgba(0, 198, 255, 0.2);
+        border-radius: 16px;
         padding: 20px;
         text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: transform 0.3s;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        transition: transform 0.3s, border-color 0.3s;
     }
     div[data-testid="stMetric"]:hover {
         transform: translateY(-5px);
-        border-color: rgba(0, 198, 255, 0.5);
-        box-shadow: 0 0 15px rgba(0, 198, 255, 0.3);
+        border-color: #00C6FF;
+        box-shadow: 0 0 20px rgba(0, 198, 255, 0.3);
     }
     div[data-testid="stMetricLabel"] {
         color: #94a3b8 !important; 
+        font-size: 0.9rem !important;
     }
     div[data-testid="stMetricValue"] {
         color: #f1f5f9 !important;
-        text-shadow: 0 0 10px rgba(255,255,255,0.2);
+        font-size: 1.8rem !important;
+        text-shadow: 0 0 15px rgba(0, 198, 255, 0.4);
     }
-
-    /* --- TABLOLAR --- */
-    .stDataFrame {
-        background: rgba(17, 24, 39, 0.6);
-        border-radius: 15px;
-        padding: 10px;
+    div[data-testid="stMetricDelta"] {
+        background-color: rgba(0,0,0,0.3);
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.8rem !important;
     }
 
     /* --- BUTTONS --- */
     .stButton button {
-        background: linear-gradient(90deg, #FF0080, #FF8C00);
+        background: linear-gradient(90deg, #0072ff, #00C6FF); /* Mavi Alev */
         color: white !important;
         border: none;
-        border-radius: 10px;
-        font-weight: 600;
+        border-radius: 8px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
         transition: all 0.3s;
+        box-shadow: 0 4px 10px rgba(0, 114, 255, 0.3);
     }
     .stButton button:hover {
-        box-shadow: 0 0 20px rgba(255, 140, 0, 0.6);
-        transform: scale(1.05);
+        box-shadow: 0 0 25px rgba(0, 198, 255, 0.6);
+        transform: translateY(-2px);
     }
-
+    
     /* --- TABS --- */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
+        gap: 8px;
         background-color: transparent;
+        border-bottom: 2px solid rgba(255,255,255,0.05);
+        padding-bottom: 10px;
     }
     .stTabs [data-baseweb="tab"] {
-        height: 50px;
+        height: 45px;
         white-space: pre-wrap;
-        background-color: rgba(255, 255, 255, 0.05);
-        border-radius: 10px;
-        color: #cbd5e1;
-        font-weight: 600;
+        background-color: rgba(30, 41, 59, 0.5);
+        border-radius: 8px;
+        color: #94a3b8;
+        font-weight: 500;
         border: 1px solid transparent;
+        transition: all 0.2s;
     }
     .stTabs [aria-selected="true"] {
-        background-color: rgba(0, 198, 255, 0.1) !important;
-        color: #00C6FF !important;
-        border: 1px solid rgba(0, 198, 255, 0.3) !important;
-        box-shadow: 0 0 10px rgba(0, 198, 255, 0.2);
+        background: linear-gradient(135deg, rgba(0, 114, 255, 0.2), rgba(0, 198, 255, 0.1));
+        color: #38bdf8 !important;
+        border: 1px solid rgba(56, 189, 248, 0.4) !important;
+        box-shadow: 0 0 15px rgba(0, 198, 255, 0.15);
     }
 
     </style>
