@@ -479,91 +479,72 @@ def sayi_hucresi_mi(value):
 
 
 def table_content_type(rows):
-    """Tablonun gerçek türünü başlığı + sütun isimlerinden belirle (numaradan bağımsız)."""
-    head = ' '.join(normalize_baslik(c) for row in rows[:16]
+    """EPDK raporlarındaki tabloları gerçek başlıklarından ayırt eder."""
+    head = ' '.join(normalize_baslik(c) for row in rows[:12]
                     for c in row if isinstance(c, str) and c.strip())
-    if ('IL ADI' in head and 'LISANS' in head and 'SATIS' in head) or ('81 IL BAZINDA' in head and 'LPG SATIS' in head):
-        return 13
-    if ('DAGITICILAR ARASI TOPTAN' in head or
-            'SATIS YAPAN LISANS' in head) and ('SATIS' in head or 'OTOGAZ' in head):
-        return 14
-    if 'URUN TURU' in head and 'DEGISIM' in head and 'LISANS' in head:
-        return 12
-    if 'DAGITICI VE URUN TURUNE GORE' in head and 'SATIS' in head:
-        return 11
+    if ('81 IL BAZINDA' in head or
+            ('IL ADI' in head and 'LISANS SAHIB' in head and 'OTOGAZ' in head)):
+        return 'il_satis'
+    if 'DAGITICILAR ARASI TOPTAN' in head or 'SATIS YAPAN LISANS SAHIB' in head:
+        return 'toptan_kumulatif'
+    if 'DAGITICI VE URUN TURUNE GORE LPG SATIS' in head:
+        return 'ulusal_kumulatif'
+    if 'LISANS SAHIPLERINE GORE LPG SATIS' in head:
+        # Ocak-Mart gibi birden fazla ayı kıyaslayan Tablo 13 aylık Tablo 12 değildir.
+        return 'yillik_kumulatif' if re.search(r'OCAK\s+(?:SUBAT|MART|NISAN|MAYIS|HAZIRAN|TEMMUZ|AGUSTOS|EYLUL|EKIM|KASIM|ARALIK)\s+20\d{2}', head) else 'yillik_aylik'
     return None
 
 
 def tablolari_ayir(sayfalar):
-    """Sayfa adı değişse de Excel içindeki 1–14 numaralı tabloları bulur.
+    """Kaynak çalışma kitabının bütün 1–15 numaralı tablolarını saklar.
 
-    Başlık sadece 'Tablo 13' şeklindeyse, A/B sütunu dışındaysa veya çalışma
-    sayfasında hiç başlık yoksa sayfa adındaki tablo numarası kullanılır.
+    Birden fazla tablo içeren sekmelerde başlıklardan böler. Tek tablo
+    içeren sekmelerde sekme numarasını kullanır: Mart 2026 Tablo 13
+    sekmesinde yanlışlıkla 'Tablo 14' yazılması veri kaybına neden olmaz.
     """
     arsiv = {}
-    baslik_re = re.compile(r'\btablo\s*[-_.#]*\s*(\d{1,2})\b', re.I)
-    for sheet_name, sheet_rows in sayfalar.items():
-        if 'ICINDEKILER' in normalize_baslik(sheet_name).replace(' ', ''):
+    heading = re.compile(r'\bTABLO\s+(\d{1,2})\b', re.I)
+    sheet_re = re.compile(r'^TABLO\s+(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?$')
+    for name, rows in sayfalar.items():
+        clean = normalize_baslik(name)
+        if 'ICINDEKILER' in clean.replace(' ', ''):
             continue
-        current, bolum = None, []
-        had_title = False
-        # Excel içinde birbirini izleyen birden fazla tablo bulunabilir.
-        for row in sheet_rows:
-            heading_num = None
-            for c in row[:min(len(row), 12)]:
-                if not isinstance(c, str):
-                    continue
-                m = baslik_re.search(normalize_baslik(c))
-                if m:
-                    heading_num = int(m.group(1))
-                    break
-            if heading_num is not None and 1 <= heading_num <= 50:
-                if bolum and current is not None:
-                    arsiv.setdefault(current, []).extend(bolum)
-                current, bolum = heading_num, []
-                had_title = True
-            if current is not None:
-                bolum.append(tuple(row))
-        if had_title:
-            if bolum and current is not None:
-                arsiv.setdefault(current, []).extend(bolum)
+        m = sheet_re.match(clean)
+        if m and m.group(2) is None:
+            # Bu dosyalarda tek sekme = tek tablo, başlığın numarası hatalı olabilir.
+            arsiv[int(m.group(1))] = [tuple(r) for r in rows]
             continue
-        # İndirilen bazı dosyalarda başlık hücresi yok; sekme adına bak.
-        matches = [int(n) for n in baslik_re.findall(normalize_baslik(sheet_name))]
-        if len(matches) == 1:
-            arsiv.setdefault(matches[0], []).extend(tuple(r) for r in sheet_rows)
-            continue
-        # Sekme adı da yeniden adlandırılmışsa içerik ve kolon imzalarına bak.
-        typ = table_content_type(sheet_rows)
-        if typ is None and 'TOPTAN' in normalize_baslik(sheet_name):
-            typ = 14
-        if typ is None and 'IL BAZINDA' in normalize_baslik(sheet_name):
-            typ = 13
-        if typ is not None:
-            arsiv.setdefault(typ, []).extend(tuple(r) for r in sheet_rows)
-    return {no: rows for no, rows in arsiv.items() if rows}
+        no, buffer = None, []
+        for row in rows:
+            match = next((heading.search(normalize_baslik(v)) for v in row
+                          if isinstance(v, str) and heading.search(normalize_baslik(v))), None)
+            if match:
+                if no is not None and buffer:
+                    arsiv[no] = buffer
+                no, buffer = int(match.group(1)), []
+            if no is not None:
+                buffer.append(tuple(row))
+        if no is not None and buffer:
+            arsiv[no] = buffer
+        elif m:
+            arsiv[int(m.group(1))] = [tuple(r) for r in rows]
+    return arsiv
 
 
 def tabloyu_bul(arsiv, kind):
-    """Önce içerik imzasını, ardından numara eşleşmesini kullanır."""
-    for number, rows in arsiv.items():
-        if table_content_type(rows) == kind:
-            return rows, number
-    return arsiv.get(kind, []), kind
+    """İçerik imzasına göre bul; tablo numarasını yalnızca tanısal kullan."""
+    matches = [(n, rows) for n, rows in arsiv.items() if table_content_type(rows) == kind]
+    return (matches[0][1], matches[0][0]) if matches else ([], None)
 
 
 def tablo_teşhis_notu(sayfalar, arsiv, kind):
-    pages = ', '.join(str(n) for n in sorted(arsiv)) or 'hiçbiri'
-    candidate = []
-    for name, rows in sayfalar.items():
-        first = ' '.join(normalize_baslik(c) for r in rows[:8]
-                         for c in r if isinstance(c, str))
-        if ('13' in normalize_baslik(name) or '14' in normalize_baslik(name) or
-                'IL BAZINDA' in first or 'TOPTAN' in first):
-            candidate.append(f'{name} ({len(rows)} satır)')
-    return (f'Bulunan tablo numaraları: {pages}. '
-            f'Aday sekmeler: {", ".join(candidate[:7]) or "; ".join(sayfalar.keys())[:280]}. '
-            'Kaynak dosyanın tablo yapısı kontrol edilmeli.')
+    bulunan = ', '.join(str(n) for n in sorted(arsiv))
+    basliklar = []
+    for n, rows in sorted(arsiv.items()):
+        title = next((str(c) for row in rows[:5] for c in row
+                      if isinstance(c, str) and 'tablo' in c.casefold()), '')
+        basliklar.append(f'{n}: {title[:90]}')
+    return f'Bulunan numaralar: {bulunan}. Başlıklar: ' + ' | '.join(basliklar[-6:])
 
 
 def tablo_satirlari(arsiv, no):
@@ -598,77 +579,96 @@ def parse_tablo_11(rows, tarih, sirket_listesi):
 IL_ISIMLERI = {normalize_baslik(n): n for n in ['Adana', 'Adıyaman', 'Afyonkarahisar', 'Ağrı', 'Aksaray', 'Amasya', 'Ankara', 'Antalya', 'Ardahan', 'Artvin', 'Aydın', 'Balıkesir', 'Bartın', 'Batman', 'Bayburt', 'Bilecik', 'Bingöl', 'Bitlis', 'Bolu', 'Burdur', 'Bursa', 'Çanakkale', 'Çankırı', 'Çorum', 'Denizli', 'Diyarbakır', 'Düzce', 'Edirne', 'Elazığ', 'Erzincan', 'Erzurum', 'Eskişehir', 'Gaziantep', 'Giresun', 'Gümüşhane', 'Hakkari', 'Hatay', 'Iğdır', 'Isparta', 'İstanbul', 'İzmir', 'Kahramanmaraş', 'Karabük', 'Karaman', 'Kars', 'Kastamonu', 'Kayseri', 'Kırıkkale', 'Kırklareli', 'Kırşehir', 'Kilis', 'Kocaeli', 'Konya', 'Kütahya', 'Malatya', 'Manisa', 'Mardin', 'Mersin', 'Muğla', 'Muş', 'Nevşehir', 'Niğde', 'Ordu', 'Osmaniye', 'Rize', 'Sakarya', 'Samsun', 'Siirt', 'Sinop', 'Sivas', 'Şanlıurfa', 'Şırnak', 'Tekirdağ', 'Tokat', 'Trabzon', 'Tunceli', 'Uşak', 'Van', 'Yalova', 'Yozgat', 'Zonguldak']}
 
 
+def _satis_kolonlari(rows, il_bazli=True):
+    """Başlıklardan il, şirket ve her ürünün ton/pay kolonunu bağımsız bulur."""
+    city, company, keys = None, None, {}
+    for row in rows[:15]:
+        for i, value in enumerate(row):
+            name = normalize_baslik(value)
+            if il_bazli and name in ('IL ADI', 'IL'):
+                city = i
+            elif ('LISANS SAHIB' in name and 'UNVAN' in name and
+                  (il_bazli or 'SATIS YAPAN' in name)):
+                company = i
+            if name in ('TUPLUGAZ', 'TUPLU GAZ', 'TUPLU'):
+                keys['Tüplü'] = i
+            elif name in ('DOKMEGAZ', 'DOKME GAZ', 'DOKME'):
+                keys['Dökme'] = i
+            elif name == 'OTOGAZ':
+                keys['Otogaz'] = i
+            elif name == 'TOPLAM':
+                keys['Toplam'] = i
+    required = ('Tüplü', 'Dökme', 'Otogaz')
+    if any(k not in keys for k in required):
+        raise ValueError('Ürün miktar sütunları (Tüplü/Dökme/Otogaz) bulunamadı')
+    if company is None or (il_bazli and city is None):
+        raise ValueError('İl veya lisans sahibi sütunu bulunamadı')
+    return city, company, keys
+
+
+def _ton_ve_pay(row, start):
+    ton = row[start] if start < len(row) else None
+    pay = row[start + 1] if start + 1 < len(row) else None
+    return sayi_temizle(ton), sayi_temizle(pay)
+
+
 def parse_tablo_13(rows, tarih, sirket_listesi):
-    """İl + firma sütunlarını başlıktan bul; metin/sayı hücrelerini okuyup ili doldur."""
+    """81 il: Ocak dosyasında Tablo 13; sonraki aylarda Tablo 14."""
     sales, totals = [], []
-    city_col, company_col = 0, 1
-    for r in rows[:25]:
-        norm = [normalize_baslik(c) for c in r]
-        cities = [i for i, v in enumerate(norm) if v in ('IL ADI', 'IL')]
-        firms = [i for i, v in enumerate(norm) if 'LISANS SAHIB' in v and 'UNVAN' in v]
-        if cities and firms:
-            city_col, company_col = cities[0], firms[0]
-            break
-    first_sales_col = company_col + 1
+    if not rows:
+        return sales, totals
+    city_col, company_col, cols = _satis_kolonlari(rows, True)
     current_city = None
     for row in rows:
-        if len(row) < first_sales_col + 6:
+        city_txt = str(row[city_col] or '').strip() if city_col < len(row) else ''
+        company_txt = str(row[company_col] or '').strip() if company_col < len(row) else ''
+        if city_txt:
+            citykey = normalize_baslik(city_txt)
+            if citykey in IL_ISIMLERI:
+                current_city = IL_ISIMLERI[citykey]
+        if not current_city or not company_txt:
             continue
-        first = str(row[city_col] or '').strip()
-        second = str(row[company_col] or '').strip()
-        if not second or ('LISANS' in normalize_baslik(second) and 'UNVAN' in normalize_baslik(second)):
+        if not all(cols[k] < len(row) and sayi_hucresi_mi(row[cols[k]])
+                   for k in ('Tüplü', 'Dökme', 'Otogaz')):
             continue
-        # Grup başlangıcında il görünür; sonraki şirketlerde il hücresi boştur.
-        if first:
-            possible_city = sehir_ismi_duzelt(first)
-            candidate = normalize_baslik(possible_city)
-            if candidate in IL_ISIMLERI:
-                current_city = IL_ISIMLERI[candidate]
-        if not current_city or not sayi_hucresi_mi(row[first_sales_col]):
-            continue
-        vals = [sayi_temizle(row[j]) for j in range(first_sales_col, first_sales_col + 6)]
-        if normalize_baslik(second) in ('TOPLAM', 'IL TOPLAMI'):
+        vals = {k: _ton_ve_pay(row, cols[k]) for k in ('Tüplü', 'Dökme', 'Otogaz')}
+        namekey = normalize_baslik(company_txt)
+        if namekey in ('TOPLAM', 'IL TOPLAMI'):
             totals.append({'Tarih': tarih, 'Şehir': current_city,
-                           'Tüplü Ton': vals[0], 'Dökme Ton': vals[2],
-                           'Otogaz Ton': vals[4]})
-            current_city = None  # Grup sonundan sonra bir sonraki il beklenir.
+                           **{k + ' Ton': v[0] for k, v in vals.items()}})
+            current_city = None
             continue
-        if 'TOPLAM' in normalize_baslik(second) or second.startswith('Tablo'):
+        if 'TOPLAM' in namekey or 'LISANS SAHIB' in namekey or namekey.startswith('TABLO '):
             continue
-        std = sirket_ismi_standartlastir(second, sirket_listesi)
-        sirket_listesi.add(std)
-        sales.append({'Tarih': tarih, 'Şehir': current_city, 'Şirket': std,
-                      'Tüplü Ton': vals[0], 'Tüplü Pay': vals[1],
-                      'Dökme Ton': vals[2], 'Dökme Pay': vals[3],
-                      'Otogaz Ton': vals[4], 'Otogaz Pay': vals[5]})
+        company = sirket_ismi_standartlastir(company_txt, sirket_listesi)
+        sirket_listesi.add(company)
+        sales.append({'Tarih': tarih, 'Şehir': current_city, 'Şirket': company,
+                      **{k + ' Ton': v[0] for k, v in vals.items()},
+                      **{k + ' Pay': v[1] for k, v in vals.items()}})
     return sales, totals
 
 
 def parse_tablo_14(rows, tarih, sirket_listesi):
-    """Toptan LPG satış tablosunun sütunlarını (kaydırılmışsa da) algılar."""
-    company_col = 0
-    for r in rows[:25]:
-        for i, c in enumerate(r):
-            v = normalize_baslik(c)
-            if 'SATIS YAPAN' in v and 'LISANS' in v:
-                company_col = i
-                break
-    start = company_col + 1
+    """Toptan satış: Ocak Tablo 14, Şubat ve sonrasında Tablo 15 (kümülatif)."""
+    if not rows:
+        return []
+    _, company_col, cols = _satis_kolonlari(rows, False)
     result = []
     for row in rows:
-        if len(row) < start + 6 or not sayi_hucresi_mi(row[start]):
+        name = str(row[company_col] or '').strip() if company_col < len(row) else ''
+        if not name or ('TOPLAM' in normalize_baslik(name) or 'UNVAN' in normalize_baslik(name)):
             continue
-        name = str(row[company_col] or '').strip()
-        if not name or 'TOPLAM' in normalize_baslik(name) or 'UNVAN' in normalize_baslik(name):
+        if not all(cols[k] < len(row) and sayi_hucresi_mi(row[cols[k]])
+                   for k in ('Tüplü', 'Dökme', 'Otogaz')):
             continue
-        nums = [sayi_temizle(row[i]) if i < len(row) else 0 for i in range(start, start + 8)]
-        std = sirket_ismi_standartlastir(name, sirket_listesi)
-        result.append({'Tarih': tarih, 'Şirket': std,
-                       'Tüplü Ton': nums[0], 'Tüplü Pay': nums[1],
-                       'Dökme Ton': nums[2], 'Dökme Pay': nums[3],
-                       'Otogaz Ton': nums[4], 'Otogaz Pay': nums[5],
-                       'Toplam Ton': nums[6] if len(row) >= start + 7 else sum(nums[i] for i in (0, 2, 4)),
-                       'Toplam Pay': nums[7]})
+        vals = {k: _ton_ve_pay(row, cols[k]) for k in ('Tüplü', 'Dökme', 'Otogaz')}
+        total = _ton_ve_pay(row, cols['Toplam']) if 'Toplam' in cols else (sum(v[0] for v in vals.values()), 0.)
+        company = sirket_ismi_standartlastir(name, sirket_listesi)
+        sirket_listesi.add(company)
+        result.append({'Tarih': tarih, 'Şirket': company,
+                       **{k + ' Ton': v[0] for k, v in vals.items()},
+                       **{k + ' Pay': v[1] for k, v in vals.items()},
+                       'Toplam Ton': total[0], 'Toplam Pay': total[1]})
     return result
 
 
@@ -699,49 +699,55 @@ def parse_tablo_12(rows, tarih, sirket_listesi):
 
 def parse_lpg_sheets(sayfalar, tarih, sirket_listesi):
     arsiv = tablolari_ayir(sayfalar)
-    t11, src11 = tabloyu_bul(arsiv, 11)
-    t13, src13 = tabloyu_bul(arsiv, 13)
-    t14, src14 = tabloyu_bul(arsiv, 14)
-    t12, src12 = tabloyu_bul(arsiv, 12)
-    national, totals = parse_tablo_11(t11, tarih, sirket_listesi)
-    province, cities = parse_tablo_13(t13, tarih, sirket_listesi)
-    wholesale = parse_tablo_14(t14, tarih, sirket_listesi)
-    yoy = parse_tablo_12(t12, tarih, sirket_listesi)
+    t11, src11 = tabloyu_bul(arsiv, 'ulusal_kumulatif')
+    tcity, srccity = tabloyu_bul(arsiv, 'il_satis')
+    twhole, srcwhole = tabloyu_bul(arsiv, 'toptan_kumulatif')
+    t12, src12 = tabloyu_bul(arsiv, 'yillik_aylik')
     warnings = []
-    for kind, source, entries in ((11, src11, national), (12, src12, yoy),
-                                  (13, src13, province), (14, src14, wholesale)):
-        if not entries:
-            warnings.append(f'{format_tarih_tr(tarih)}: Tablo {kind} okunamadı. '
+    national, totals = parse_tablo_11(t11, tarih, sirket_listesi) if t11 else ([], None)
+    try:
+        province, cities = parse_tablo_13(tcity, tarih, sirket_listesi)
+    except Exception as exc:
+        province, cities = [], []
+        warnings.append(f'{format_tarih_tr(tarih)}: İl tablosu sütun hatası: {exc}')
+    try:
+        wholesale = parse_tablo_14(twhole, tarih, sirket_listesi)
+    except Exception as exc:
+        wholesale = []
+        warnings.append(f'{format_tarih_tr(tarih)}: Toptan tablo sütun hatası: {exc}')
+    yoy = parse_tablo_12(t12, tarih, sirket_listesi) if t12 else []
+
+    for kind, source, records in (('ulusal kümülatif', src11, national),
+                                  ('aylık yıllık karşılaştırma', src12, yoy),
+                                  ('81 il satışları', srccity, province),
+                                  ('toptan kümülatif', srcwhole, wholesale)):
+        if not records:
+            warnings.append(f'{format_tarih_tr(tarih)}: {kind} okunamadı. '
                             + tablo_teşhis_notu(sayfalar, arsiv, kind))
-        elif kind != source:
-            warnings.append(f'{format_tarih_tr(tarih)}: İlgi alanı Tablo {kind} '
-                            f'kaynak dosyada Tablo {source} başlığında bulundu; içerik imzasına göre okundu.')
-    if cities and len(cities) != 81:
-        warnings.append(f'{format_tarih_tr(tarih)}: 81 il beklenirken {len(cities)} il toplamı bulundu')
-    if national and totals:
-        for col in TON_KOLONLARI:
-            diff = abs(sum(x[col] for x in national) - totals[col])
-            if diff > 0.1:
-                warnings.append(f'{format_tarih_tr(tarih)} Tablo 11 {col}: firma toplamı ile resmi toplam farkı {diff:.3f} ton')
+    if province and len(cities) != 81:
+        warnings.append(f'{format_tarih_tr(tarih)}: 81 il yerine {len(cities)} il toplamı bulundu.')
     if province and cities:
         for col in TON_KOLONLARI:
-            diff = abs(sum(x[col] for x in province) - sum(x[col] for x in cities))
-            if diff > 0.1:
-                warnings.append(f'{format_tarih_tr(tarih)} Tablo 13 {col}: il toplamları ile şirket satışları farkı {diff:.3f} ton')
-    if province and national:
+            diff = sum(x[col] for x in province) - sum(x[col] for x in cities)
+            if abs(diff) > 0.1:
+                warnings.append(f'{format_tarih_tr(tarih)} il şirket/il toplamları {col} farkı: {diff:+,.3f} ton')
+    if national and totals:
         for col in TON_KOLONLARI:
-            diff = abs(sum(x[col] for x in province) - sum(x[col] for x in national))
-            if diff > 0.1:
-                warnings.append(f'{format_tarih_tr(tarih)} {col}: Tablo 11 ve 13 arasında {diff:.3f} ton fark')
+            diff = sum(x[col] for x in national) - totals[col]
+            if abs(diff) > 0.1:
+                warnings.append(f'{format_tarih_tr(tarih)} resmi kümülatif {col} şirket/toplam farkı: {diff:+,.3f} ton')
+    # Kaynakta mart Tablo 13 sekmesinin kendi başlık numarası 'Tablo 14' yazıyor.
+    # Doğru sekme/başlık türü belirlenir; bu basım hatası analize karışmaz.
+    if not province or not cities:
+        warnings.append(f'{format_tarih_tr(tarih)}: Bu ayın şehir bazlı verisi eksik olduğundan grafiklerden dışlandı.')
     return national, totals, province, cities, wholesale, yoy, arsiv, warnings
 
 
 @st.cache_data(show_spinner=False)
 def verileri_oku(imza):
     from openpyxl import load_workbook
-
-    tum_sehir_sirket, tum_iller, tum_turkiye, tum_ulusal = [], [], [], []
-    tum_toptan, tum_yillik, tum_arsiv, warnings = [], [], {}, []
+    tum_sehir_sirket, tum_iller, tum_toptan, tum_yillik = [], [], [], []
+    tum_kum, tum_yillik_kum, tum_arsiv, warnings = [], [], {}, []
     sirket_listesi = set()
 
     for filename, _, _ in imza:
@@ -754,59 +760,90 @@ def verileri_oku(imza):
             finally:
                 wb.close()
         except Exception as ex:
-            warnings.append(f'{filename}: Excel okunamadı ({ex})')
+            warnings.append(f'{filename}: Excel dosyası açılamadı ({ex})')
             continue
-        ulusal, toplam, illerin_satisi, il_toplamlari, toptan, yillik, arsiv, notlar = parse_lpg_sheets(sayfalar, tarih, sirket_listesi)
-        tum_ulusal.extend(ulusal)
-        tum_sehir_sirket.extend(illerin_satisi)
+        ulusal_kum, kum_total, sehir_satisi, il_toplamlari, toptan_kum, yillik, arsiv, notlar = parse_lpg_sheets(
+            sayfalar, tarih, sirket_listesi)
+        tum_sehir_sirket.extend(sehir_satisi)
         tum_iller.extend(il_toplamlari)
-        tum_toptan.extend(toptan)
+        tum_toptan.extend(toptan_kum)
         tum_yillik.extend(yillik)
+        t13_yillik, _ = tabloyu_bul(arsiv, 'yillik_kumulatif')
+        if t13_yillik:
+            tum_yillik_kum.extend(parse_tablo_12(t13_yillik, tarih, sirket_listesi))
+        tum_kum.extend(ulusal_kum)
         tum_arsiv[(tarih.year, tarih.month)] = arsiv
         warnings.extend(notlar)
-        if toplam:
-            tum_turkiye.append(toplam)
 
     df_sirket = pd.DataFrame(tum_sehir_sirket, columns=SIRKET_KOLONLARI)
     df_iller = pd.DataFrame(tum_iller, columns=['Tarih', 'Şehir', *TON_KOLONLARI])
-    df_turkiye = pd.DataFrame(tum_turkiye, columns=['Tarih', *TON_KOLONLARI])
-    df_ulusal = pd.DataFrame(tum_ulusal, columns=['Tarih', 'Şirket', *TON_KOLONLARI, *PAY_KOLONLARI])
+    df_kum = pd.DataFrame(tum_kum, columns=['Tarih', 'Şirket', *TON_KOLONLARI, *PAY_KOLONLARI])
     df_toptan = pd.DataFrame(tum_toptan)
     df_yillik = pd.DataFrame(tum_yillik)
+    df_yillik_kum = pd.DataFrame(tum_yillik_kum)
 
-    # The input sheets contain each company only once per city and month.
-    # Group duplicate names introduced by company-name canonicalization;
-    # recompute weighted market shares using the original city/national totals.
-    for df, grp in ((df_sirket, ['Tarih', 'Şehir', 'Şirket']),
-                    (df_ulusal, ['Tarih', 'Şirket'])):
-        if not df.empty:
-            df2 = df.groupby(grp, as_index=False)[TON_KOLONLARI].sum()
-            group_keys = ['Tarih', 'Şehir'] if 'Şehir' in grp else ['Tarih']
-            total = df2.groupby(group_keys)[TON_KOLONLARI].transform('sum')
-            for col, pay in zip(TON_KOLONLARI, PAY_KOLONLARI):
-                df2[pay] = 100 * df2[col] / total[col].replace(0, np.nan)
-                df2[pay] = df2[pay].fillna(0)
-            if 'Şehir' in grp:
-                df_sirket = df2
-            else:
-                df_ulusal = df2
+    # Aylık satışlar il tablosundan gelir (Ocak: 13, diğer aylar: 14).
+    # Tablo 11 Ocak'tan itibaren kümülatif olduğu için aylık veriymiş gibi EKLENMEZ.
+    if not df_sirket.empty:
+        df_sirket = df_sirket.groupby(['Tarih', 'Şehir', 'Şirket'], as_index=False)[TON_KOLONLARI].sum()
+        all_totals = df_sirket.groupby(['Tarih', 'Şehir'])[TON_KOLONLARI].transform('sum')
+        for col, pay in zip(TON_KOLONLARI, PAY_KOLONLARI):
+            df_sirket[pay] = (100 * df_sirket[col] / all_totals[col].replace(0, np.nan)).fillna(0)
 
-    # National rows use Tablo 11 (not duplicated city-derived company volumes).
+    if not df_iller.empty:
+        df_iller = df_iller.groupby(['Tarih', 'Şehir'], as_index=False)[TON_KOLONLARI].sum()
+    elif not df_sirket.empty:
+        df_iller = df_sirket.groupby(['Tarih', 'Şehir'], as_index=False)[TON_KOLONLARI].sum()
+
+    # Aylık Türkiye toplamı 81 ilin aynı ay toplamlarından hesaplanır.
+    df_turkiye = (df_iller.groupby('Tarih', as_index=False)[TON_KOLONLARI].sum()
+                  if not df_iller.empty else pd.DataFrame(columns=['Tarih', *TON_KOLONLARI]))
+    df_ulusal = (df_sirket.groupby(['Tarih', 'Şirket'], as_index=False)[TON_KOLONLARI].sum()
+                 if not df_sirket.empty else pd.DataFrame(columns=['Tarih', 'Şirket', *TON_KOLONLARI]))
     if not df_ulusal.empty:
-        national = df_ulusal.copy()
-        national['Şehir'] = 'TÜRKİYE GENELİ'
-        df_sirket = pd.concat([df_sirket, national[df_sirket.columns]], ignore_index=True)
-    if not df_turkiye.empty:
-        total_rows = df_turkiye.copy()
-        total_rows['Şehir'] = 'TÜRKİYE GENELİ'
-        df_iller = pd.concat([df_iller, total_rows[df_iller.columns]], ignore_index=True)
+        totals = df_ulusal.groupby('Tarih')[TON_KOLONLARI].transform('sum')
+        for col, pay in zip(TON_KOLONLARI, PAY_KOLONLARI):
+            df_ulusal[pay] = (100 * df_ulusal[col] / totals[col].replace(0, np.nan)).fillna(0)
 
-    for df in [df_sirket, df_iller, df_turkiye, df_ulusal, df_toptan, df_yillik]:
+    if not df_kum.empty:
+        df_kum = df_kum.groupby(['Tarih', 'Şirket'], as_index=False)[TON_KOLONLARI].sum()
+        total = df_kum.groupby('Tarih')[TON_KOLONLARI].transform('sum')
+        for col, pay in zip(TON_KOLONLARI, PAY_KOLONLARI):
+            df_kum[pay] = (100 * df_kum[col] / total[col].replace(0, np.nan)).fillna(0)
+
+    # Resmi Tablo 11 toplamı ile ay bazlı 81 il toplamlarının zaman içinde
+    # birikimi farklı olabilir: EPDK geçmiş ay verilerini revize edebilir.
+    if not df_kum.empty and not df_turkiye.empty:
+        for date in sorted(df_turkiye['Tarih'].unique()):
+            months = df_turkiye[(df_turkiye['Tarih'].dt.year == date.year) &
+                                (df_turkiye['Tarih'] <= date)]
+            if len(months) != date.month:  # Kesintili aylarda doğrulama yapma.
+                continue
+            official = df_kum[df_kum['Tarih'] == date]
+            if official.empty:
+                continue
+            for col in TON_KOLONLARI:
+                diff = float(official[col].sum() - months[col].sum())
+                if abs(diff) > max(1.0, 0.0001 * float(official[col].sum())):
+                    warnings.append(f'{format_tarih_tr(date)} {col}: resmi kümülatif Tablo 11 ile '
+                                    f'aylık il raporları toplamı arasında {diff:+,.2f} ton fark. '
+                                    'Kaynak raporlardaki dönemsel revizyonlardan kaynaklanabilir.')
+
+    if not df_ulusal.empty:
+        n = df_ulusal.copy()
+        n['Şehir'] = 'TÜRKİYE GENELİ'
+        df_sirket = pd.concat([df_sirket, n[df_sirket.columns]], ignore_index=True)
+    if not df_turkiye.empty:
+        n = df_turkiye.copy()
+        n['Şehir'] = 'TÜRKİYE GENELİ'
+        df_iller = pd.concat([df_iller, n[df_iller.columns]], ignore_index=True)
+
+    for df in [df_sirket, df_iller, df_turkiye, df_ulusal, df_toptan, df_yillik, df_kum, df_yillik_kum]:
         if not df.empty:
             df.sort_values('Tarih', inplace=True)
             df['Dönem'] = df['Tarih'].apply(format_tarih_tr)
             df['Tarih_Grafik'] = df['Tarih'].apply(format_tarih_grafik)
-    return df_sirket, df_iller, df_turkiye, df_ulusal, df_toptan, df_yillik, tum_arsiv, warnings
+    return df_sirket, df_iller, df_turkiye, df_ulusal, df_toptan, df_yillik, tum_arsiv, warnings, df_kum, df_yillik_kum
 
 
 def tablo_dataframe(rows):
@@ -871,7 +908,7 @@ if not st.session_state['analiz_basladi']:
 
 imza, dosya_uyarilari = aylik_excel_imzasi()
 with st.spinner('Aylık Excel verileri yükleniyor...'):
-    df_sirket, df_iller, df_turkiye, df_turkiye_sirket, df_toptan, df_yillik, tablo_arsivi, veri_uyarilari = verileri_oku(imza)
+    df_sirket, df_iller, df_turkiye, df_turkiye_sirket, df_toptan, df_yillik, tablo_arsivi, veri_uyarilari, df_kum_resmi, df_yillik_kum = verileri_oku(imza)
 
 st.title("📊 EPDK Stratejik Pazar Analizi")
 
@@ -893,9 +930,13 @@ else:
     else:
         st.sidebar.caption(f"📂 {len(imza)} aylık Excel · {df_iller[df_iller['Şehir'] != 'TÜRKİYE GENELİ']['Şehir'].nunique()} il")
         if veri_uyarilari or dosya_uyarilari:
-            with st.expander(f"⚠️ Veri kontrolü: {len(veri_uyarilari) + len(dosya_uyarilari)} uyarı"):
+            with st.expander(f"ℹ️ Veri kontrolü: {len(veri_uyarilari) + len(dosya_uyarilari)} not"):
+                st.caption('Kaynak revizyon farkları bilgi amaçlıdır; bulunamayan tablo ve okunamayan dosyalar hata olarak gösterilir.')
                 for mesaj in dosya_uyarilari + veri_uyarilari:
-                    st.warning(mesaj)
+                    if 'resmi kümülatif Tablo 11 ile' in mesaj:
+                        st.info(mesaj)
+                    else:
+                        st.warning(mesaj)
         # --- ANA MENÜ SEÇİMİ ---
         st.sidebar.title("📌 Menü")
         sayfa_secimi = st.sidebar.radio("Rapor Türü Seçiniz:", [
@@ -1187,7 +1228,7 @@ else:
                 else: st.error("İl verileri eksik.")
 
         # =================================================================================================
-        # 2. KÜMÜLATİF RAPOR: MONTHLY XLSX FILES ONLY (NO HARDCODED DOCX)
+        # 2. KÜMÜLATİF RAPOR: OFFICIAL TABLO 11 + MONTHLY SOURCE COMPARISON
         # =================================================================================================
         elif sayfa_secimi == "Kümülatif Rapor (Ocak-Güncel)":
             st.header("📈 Kümülatif Pazar Analizi")
@@ -1209,14 +1250,26 @@ else:
             if eksik:
                 st.warning("Bu yıla ait eksik aylar: " + ', '.join(TR_AYLAR[m] for m in eksik))
             ortak = sorted(ay_curr & ay_prev)
-            st.caption(f"Ocak–{TR_AYLAR[son_ay]} {yil}. Kaynak: yüklediğiniz aylık Excel dosyaları, Tablo 11.")
+            st.caption(f"Ocak–{TR_AYLAR[son_ay]} {yil}. Aylık kaynak: il bazlı Tablo 13/14. "
+                       "Resmi kümülatif kaynak: Tablo 11.")
 
             def donem_toplam(df, year, months):
                 d = df[(df['Tarih'].dt.year == year) & df['Tarih'].dt.month.isin(months)]
                 return d[TON_KOLONLARI].sum()
 
+            kaynak = st.radio('Kümülatif hesap yöntemi',
+                              ['Resmi kümülatif (Tablo 11)', 'Yüklenen aylık il satışlarının toplamı'],
+                              horizontal=True)
+            latest_date = pd.Timestamp(year=yil, month=son_ay, day=1)
+            official_period = df_kum_resmi[df_kum_resmi['Tarih'] == latest_date]
+            resmi_secildi = kaynak.startswith('Resmi') and not official_period.empty
+            if kaynak.startswith('Resmi') and official_period.empty:
+                st.warning('Seçilen dönem için resmi kümülatif rapor yok; aylık il satışlarından hesaplanıyor.')
+            if eksik and kaynak.startswith('Yüklenen'):
+                st.warning('Eksik aylar bulunduğu için aylık toplama dayalı sonuç, tam yılbaşından itibaren kümülatif değildir.')
             cols = st.columns(3)
-            current_total = donem_toplam(df_turkiye, yil, sorted(ay_curr))
+            current_total = (official_period[TON_KOLONLARI].sum() if resmi_secildi
+                             else donem_toplam(df_turkiye, yil, sorted(ay_curr)))
             for box, s in zip(cols, ['Otogaz', 'Tüplü', 'Dökme']):
                 box.metric(s + ' (ton)', f"{current_total[s + ' Ton']:,.2f}")
 
@@ -1240,10 +1293,13 @@ else:
 
             st.subheader("Dağıtıcı Bazlı Kümülatif Satışlar ve Pazar Payları")
             use_months = ortak if ortak else sorted(ay_curr)
-            current_dist = df_turkiye_sirket[
-                (df_turkiye_sirket['Tarih'].dt.year == yil) &
-                df_turkiye_sirket['Tarih'].dt.month.isin(use_months)
-            ].groupby('Şirket', as_index=False)[TON_KOLONLARI].sum()
+            current_dist = (official_period.groupby('Şirket', as_index=False)[TON_KOLONLARI].sum()
+                            if resmi_secildi and not ortak else
+                            df_turkiye_sirket[(df_turkiye_sirket['Tarih'].dt.year == yil) &
+                                              df_turkiye_sirket['Tarih'].dt.month.isin(use_months)]
+                            .groupby('Şirket', as_index=False)[TON_KOLONLARI].sum())
+            if resmi_secildi and ortak:
+                st.caption('Şirket yıllık kıyası ortak ayların aylık toplamlarıyla, üst metrikler resmi Tablo 11 ile hesaplanır.')
             previous_dist = df_turkiye_sirket[
                 (df_turkiye_sirket['Tarih'].dt.year == yil - 1) &
                 df_turkiye_sirket['Tarih'].dt.month.isin(ortak)
@@ -1282,15 +1338,15 @@ else:
                         curr['Pazar Payı (%)'] = curr[f'{yil} Ton'] / total * 100 if total else 0
                         st.dataframe(curr.sort_values(f'{yil} Ton', ascending=False), use_container_width=True)
             else:
-                st.warning('Seçilen dönem için Tablo 11 dağıtıcı verisi bulunamadı.')
+                st.warning('Seçilen dönem için dağıtıcı verisi bulunamadı.')
 
         # =================================================================================================
-        # 3. TABLO 14: WHOLESALE (NOT CITY-LEVEL)
+        # 3. TABLO 14/15: WHOLESALE (NOT CITY-LEVEL)
         # =================================================================================================
-        elif sayfa_secimi == "Toptan LPG (Tablo 14)":
-            st.header("🚚 Dağıtıcılar Arası Toptan LPG Satışları — Tablo 14")
+        elif sayfa_secimi == "Toptan LPG (Tablo 14/15)":
+            st.header("🚚 Dağıtıcılar Arası Toptan LPG Satışları — Tablo 14/15")
             if df_toptan.empty:
-                st.warning("Tablo 14 verisi bulunamadı.")
+                st.warning("Toptan satış tablosu bulunamadı.")
             else:
                 dates = sorted(df_toptan['Tarih'].unique(), reverse=True)
                 date = st.selectbox('Dönem', dates, format_func=tarih_secim_etiketi)
@@ -1300,8 +1356,9 @@ else:
                 st.dataframe(month[fields].sort_values('Toplam Ton', ascending=False)
                              .style.format({c: '{:,.2f}' for c in fields if c != 'Şirket'}),
                              use_container_width=True)
-                st.caption('Bu tablo toptan dağıtıcılar arası satışlardır; perakende il pazarının toplamına eklenmez.')
-                st.subheader('Toptan Satış Eğilimleri')
+                st.caption('Ocak Tablo 14, Şubat ve sonrası Tablo 15: değerler yılbaşından itibaren birikimli (kümülatif). '
+                           'Bu satışlar il bazlı satışlara eklenmez.')
+                st.subheader('Toptan Satış Eğilimleri (Resmi Kümülatif)')
                 ss = sorted(df_toptan['Şirket'].unique())
                 chosen = st.multiselect('Şirketler', ss, default=[LIKITGAZ_NAME] if LIKITGAZ_NAME in ss else ss[:1])
                 if chosen:
@@ -1312,16 +1369,19 @@ else:
         # =================================================================================================
         # 4. TABLO 12: YOY COMPANY REPORT
         # =================================================================================================
-        elif sayfa_secimi == "Yıllık Kıyas (Tablo 12)":
-            st.header("📆 Şirketlerin Önceki Yıla Göre Satışları — Tablo 12")
-            st.caption('Kaynakta Pay (%) sütunları şirket içi ürün karmasını ifade eder; il/ulusal pazar payı değildir.')
-            if df_yillik.empty:
-                st.warning('Tablo 12 verisi bulunamadı.')
+        elif sayfa_secimi == "Yıllık Kıyas (Tablo 12/13)":
+            st.header("📆 Şirketlerin Önceki Yıla Göre Satışları — Tablo 12/13")
+            st.caption('Tablo 12 aylık, Şubat ve sonrası Tablo 13 yılbaşından itibaren birikimli kıyas içerir. '
+                       'Pay (%) sütunları şirket içi ürün karmasını ifade eder; pazar payı değildir.')
+            karsilastirma = st.radio('Karşılaştırma türü', ['Aylık (Tablo 12)', 'Kümülatif (Tablo 13)'], horizontal=True)
+            yil_df = df_yillik if karsilastirma.startswith('Aylık') else df_yillik_kum
+            if yil_df.empty:
+                st.warning('Seçilen karşılaştırma türü için veri bulunamadı.')
             else:
-                dates = sorted(df_yillik['Tarih'].unique(), reverse=True)
+                dates = sorted(yil_df['Tarih'].unique(), reverse=True)
                 chosen_date = st.selectbox('Dönem', dates, format_func=tarih_secim_etiketi)
                 product = st.selectbox('Ürün türü', ['Firma Toplamı', 'Otogaz', 'Tüplü', 'Dökme'])
-                table = df_yillik[(df_yillik['Tarih'] == chosen_date) & (df_yillik['Ürün'] == product)]
+                table = yil_df[(yil_df['Tarih'] == chosen_date) & (yil_df['Ürün'] == product)]
                 cols = ['Şirket', 'Önceki Yıl Ton', 'Güncel Yıl Ton', 'Değişim (%)']
                 st.dataframe(table[cols].sort_values('Güncel Yıl Ton', ascending=False)
                              .style.format({'Önceki Yıl Ton': '{:,.2f}', 'Güncel Yıl Ton': '{:,.2f}',
@@ -1329,9 +1389,9 @@ else:
                              .map(highlight_val, subset=['Değişim (%)']), use_container_width=True)
 
         # =================================================================================================
-        # 5. EVERY TABLE 1-14 IN THE SOURCE FILES (UNMODIFIED CELL VALUES)
+        # 5. EVERY TABLE 1-15 IN THE SOURCE FILES (UNMODIFIED CELL VALUES)
         # =================================================================================================
-        elif sayfa_secimi == "Tüm Tablolar (1–14)":
+        elif sayfa_secimi == "Tüm Tablolar (1–15)":
             st.header('📚 Tüm EPDK Excel Tabloları')
             available_dates = sorted(tablo_arsivi.keys(), reverse=True)
             chosen_period = st.selectbox('Dönem', available_dates,
@@ -1339,8 +1399,8 @@ else:
             all_tables = tablo_arsivi[chosen_period]
             table_numbers = sorted(all_tables.keys())
             selected_table = st.selectbox('Tablo numarası', table_numbers,
-                                          format_func=lambda k: f'Tablo {k}' + (' — İl bazlı satışlar' if k == 13 else
-                                          ' — Dağıtıcılar arası toptan satış' if k == 14 else ''))
+                                          format_func=lambda k: f'Tablo {k}' + (' — İl bazlı satışlar' if table_content_type(all_tables[k]) == 'il_satis' else
+                                          ' — Dağıtıcılar arası toptan satış' if table_content_type(all_tables[k]) == 'toptan_kumulatif' else ''))
             st.caption('Excel hücrelerindeki değerler olduğu gibi gösterilir; birleşik başlık satırları korunur.')
             raw = tablo_dataframe(all_tables[selected_table])
             st.dataframe(raw, use_container_width=True, hide_index=True, height=540)
